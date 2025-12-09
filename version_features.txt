@@ -1,0 +1,34 @@
+version 1:
+
+Features :
+a grids has direction
+Correct moves counter
+Wrong moves counter
+Penalty:
+When wrong move is played, it is not accepted and the wrong count in increased.
+Show visited path
+
+Graph:
+ Initially: Name the grids as A,B,C...
+ When arrow moved from suppose A to B rename it as 1 to 2
+
+
+Winning criteria:
+ reach 16 ||
+ cover all grid places
+ 
+
+Losing criteria:
+ wrong move
+ some grid place left out 
+ no possible moves.
+ 
+No more possible moves:
+loser chosen by no of wrong moves
+
+
+
+Later versions
+ Keep Timer and see who finishes the puzzle first.
+ UI 
+ Undo and Redo.
