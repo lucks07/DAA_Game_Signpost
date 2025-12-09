@@ -4,6 +4,7 @@ Features :
 a grids has direction
 Correct moves counter
 Wrong moves counter
+minimal ui
 Penalty:
 When wrong move is played, it is not accepted and the wrong count in increased.
 Show visited path
