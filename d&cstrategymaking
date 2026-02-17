@@ -1,0 +1,7 @@
+Initial DIVIDE & CONQUER Strategy:
+
+At each CPU turn, the problem of selecting the optimal next move is divided into smaller independent subproblems.
+We do this by splitting the set of all candidate neighboring cells into smaller subsets. Each subset is 
+recursively evaluated and sorted based on manhattan distance to the goal. 
+The solutions of these subproblems are finally combined to obtain a ordered list of candidate moves, from which the best feasible move is selected.
+
