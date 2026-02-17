@@ -126,8 +126,6 @@ class GameState:
 
 # ====================
 # CPU PLAYER (Top-Down Dynamic Programming with Memoization)
-# Previously: Depth-Limited Divide & Conquer Search
-# Upgrade: Same D&C recursion + memoization cache = DP
 # ====================
 
 class dncCPU:
@@ -135,7 +133,7 @@ class dncCPU:
         self.graph = graph
         self.game_state = game_state
         self.depth = depth
-        self.memo = {}   # 🔥 DP memoization cache: (position, depth, visited_set) → score
+        self.memo = {} 
 
     def distance_to_goal(self, label):
         node = self.graph.nodes[label]
@@ -162,18 +160,18 @@ class dncCPU:
         state_key = (current, depth, frozenset(visited_set))
 
         if state_key in self.memo:
-            return self.memo[state_key]          # 🔥 cache hit — skip recursion
+            return self.memo[state_key]          # cache hit — skip recursion
 
         # Base case
         if depth == 0 or current == 'P':
             score = self.score_state(current)
-            self.memo[state_key] = score         # 🔥 store in DP table
+            self.memo[state_key] = score         # store in DP table
             return score
 
         candidates = self.build_candidates(current, visited_set, illegal_history)
         if not candidates:
             score = self.score_state(current)
-            self.memo[state_key] = score         # 🔥 store in DP table
+            self.memo[state_key] = score         # store in DP table
             return score
 
         best = -10**9
@@ -194,11 +192,11 @@ class dncCPU:
         if best == -10**9:
             best = self.score_state(current)
 
-        self.memo[state_key] = best              # 🔥 store result in DP table
+        self.memo[state_key] = best              # store result in DP table
         return best
 
     def get_best_move(self):
-        self.memo.clear()    # 🔥 reset DP cache each turn — game state changes
+        self.memo.clear()    # reset DP cache each turn — game state changes
 
         current = self.game_state.current_position
         illegal_history = self.game_state.cpu_illegal_history
@@ -225,28 +223,27 @@ class dncCPU:
 
 
 # ====================
-# GUI — CLEAN ELEGANT DESIGN
+# GUI
 # ====================
 
 class PuzzleGameGUI:
-    # ── Palette: deep slate + warm ivory + two accent tones ──
     C = {
         # backgrounds
-        'bg':           '#1C1F26',   # near-black slate
-        'surface':      '#252930',   # slightly lighter panel
-        'card':         '#2E3340',   # cell / card background
+        'bg':           '#1C1F26',  
+        'surface':      '#252930',   
+        'card':         '#2E3340',   
         'card_hover':   '#383E4E',
 
         # text
-        'text_primary': '#EAEDF3',   # near-white
-        'text_secondary':'#8A90A0',  # muted label
-        'text_dim':     '#545B6E',   # very muted
+        'text_primary': '#EAEDF3',   
+        'text_secondary':'#8A90A0',  
+        'text_dim':     '#545B6E',   
 
         # accents
-        'accent_blue':  '#5B9CF6',   # soft indigo-blue (current position)
-        'accent_green': '#4CAF82',   # sage green  (visited / correct)
-        'accent_amber': '#E8A838',   # warm amber  (timer warning)
-        'accent_red':   '#E05C5C',   # muted red   (error moves)
+        'accent_blue':  '#5B9CF6', 
+        'accent_green': '#4CAF82',   
+        'accent_amber': '#E8A838',   
+        'accent_red':   '#E05C5C',   
 
         # borders / dividers
         'border':       '#343A4A',
