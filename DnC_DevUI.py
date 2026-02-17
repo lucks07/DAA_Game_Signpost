@@ -592,10 +592,6 @@ class PuzzleGameGUI:
         self.update_display()
         self.root.after(600, self.cpu_turn)
 
-    # ────────────────────────────────────────────────
-    # Move handling
-    # ────────────────────────────────────────────────
-
     def on_cell_click(self, label):
         if self.game_state.current_turn != 'Human' or self.game_state.game_over:
             return
@@ -671,10 +667,6 @@ class PuzzleGameGUI:
             else:
                 self.update_display()
         step(0)
-
-    # ────────────────────────────────────────────────
-    # Display update
-    # ────────────────────────────────────────────────
 
     def update_display(self):
         for label, node in self.graph.nodes.items():
