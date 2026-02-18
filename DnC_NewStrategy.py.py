@@ -130,7 +130,7 @@ class GameState:
 
 class dncCPU:
     """
-    Divide & Conquer Search (no sorting):
+    Divide & Conquer Search :
     - Divide: consider each candidate neighbor move as a subproblem
     - Conquer: recursively evaluate best outcome from that neighbor (depth-limited)
     - Combine: pick the move with the highest score
@@ -140,54 +140,37 @@ class dncCPU:
         self.game_state = game_state
         self.depth = depth
 
-    # ---------- Heuristic ----------
+
     def distance_to_goal(self, label):
         node = self.graph.nodes[label]
         goal = self.graph.nodes['P']
         return abs(node.row - goal.row) + abs(node.col - goal.col)
 
-    # ---------- Candidate generation ----------
     def build_candidates(self, current, visited_set, illegal_history):
         neighbors = self.graph.get_neighbors(current)
 
-        # Primary: not visited and not previously tried illegal
         primary = [
             n for n in neighbors
             if n not in visited_set and (current, n) not in illegal_history
         ]
 
-        # Fallback: not visited (ignore illegal history)
+
         fallback = [n for n in neighbors if n not in visited_set]
 
-        # Fallback: any neighbor
         candidates = primary or fallback or neighbors
 
         return candidates
 
-    # ---------- Scoring ----------
+
     def score_state(self, position):
-        """
-        Higher is better.
-        Goal is highest.
-        Otherwise prefer closer to goal.
-        """
+
         if position == 'P':
             return 10_000
         return -self.distance_to_goal(position)
 
-    # ---------- Divide & Conquer recursive evaluator ----------
-    def evaluate_best_score(self, current, depth, visited_set, illegal_history):
-        """
-        Returns best achievable score from this state within 'depth' moves,
-        assuming the CPU continues to choose best moves.
 
-        NOTE:
-        - This evaluator uses ONLY legality constraints (visited + illegal-history preference)
-          and heuristic closeness to goal.
-        - It does NOT enforce 'correct move' from solution_path (that's checked in GameState.make_move).
-          That is okay: CPU is still "trying" to play intelligently, but may be wrong due to hidden path rule.
-        """
-        # Base cases
+    def evaluate_best_score(self, current, depth, visited_set, illegal_history):
+
         if depth == 0 or current == 'P':
             return self.score_state(current)
 
@@ -199,7 +182,7 @@ class dncCPU:
 
         # DIVIDE: each candidate leads to a subproblem
         for nxt in candidates:
-            # If nxt is already visited in this simulated path, skip it
+
             if nxt in visited_set:
                 continue
 
@@ -224,17 +207,17 @@ class dncCPU:
 
         return best
 
-    # ---------- Final decision ----------
+
     def get_best_move(self):
         current = self.game_state.current_position
         illegal_history = self.game_state.cpu_illegal_history
 
-        # Start visited set from REAL visited nodes
+
         visited_set = {lbl for lbl, node in self.graph.nodes.items() if node.visited}
 
         candidates = self.build_candidates(current, visited_set, illegal_history)
         if not candidates:
-            # last resort: choose any node (will likely be illegal, but avoids crash)
+         
             return random.choice(list(self.graph.nodes.keys()))
 
         best_move = candidates[0]
@@ -269,7 +252,7 @@ class dncCPU:
 # ====================
 
 class PuzzleGameGUI:
-    # Retro Glitch Color Palette - ULTRA BRIGHT & VIBRANT
+    
     COLORS = {
         'bg_dark': '#0a0520',
         'bg_panel': '#150a3d',
@@ -341,11 +324,10 @@ class PuzzleGameGUI:
         return graph
 
     def create_gui(self):
-        # ===== Root container =====
+
         container = tk.Frame(self.root, bg=self.COLORS['bg_dark'])
         container.pack(fill='both', expand=True, padx=25, pady=20)
 
-        # ===== Glitchy Title with scanlines effect =====
         title_frame = tk.Frame(container, bg=self.COLORS['bg_dark'])
         title_frame.pack(pady=(0, 20))
         
@@ -366,21 +348,18 @@ class PuzzleGameGUI:
         )
         self.subtitle_label.pack()
 
-        # ===== Main content frame - TWO COLUMNS =====
+
         main_frame = tk.Frame(container, bg=self.COLORS['bg_dark'])
         main_frame.pack(fill='both', expand=True)
 
-        # Configure equal column weights - 50/50 split
         main_frame.grid_rowconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(0, weight=1)  # Left side - Grid
-        main_frame.grid_columnconfigure(1, weight=0, minsize=3)  # Separator line
-        main_frame.grid_columnconfigure(2, weight=1)  # Right side - Panels
+        main_frame.grid_columnconfigure(0, weight=1)  
+        main_frame.grid_columnconfigure(1, weight=0, minsize=3) 
+        main_frame.grid_columnconfigure(2, weight=1) 
 
-        # ===== LEFT SIDE: Grid Matrix =====
         left_container = tk.Frame(main_frame, bg=self.COLORS['bg_dark'])
         left_container.grid(row=0, column=0, sticky='nsew', padx=(0, 15))
         
-        # Center the grid in left container
         left_container.grid_rowconfigure(0, weight=1)
         left_container.grid_columnconfigure(0, weight=1)
         
@@ -408,7 +387,6 @@ class PuzzleGameGUI:
             bg=self.COLORS['bg_panel']
         ).grid(row=0, column=0, columnspan=4, pady=(0, 15))
 
-        # Grid buttons - good readable size
         for label, node in self.graph.nodes.items():
             btn = tk.Button(
                 grid_frame,
@@ -430,7 +408,6 @@ class PuzzleGameGUI:
             btn.grid(row=node.row + 1, column=node.col, padx=5, pady=5)
             self.buttons[label] = btn
 
-        # ===== SEPARATOR LINE =====
         separator = tk.Frame(
             main_frame,
             bg=self.COLORS['border_glow'],
@@ -438,17 +415,16 @@ class PuzzleGameGUI:
         )
         separator.grid(row=0, column=1, sticky='ns')
 
-        # ===== RIGHT SIDE: Three Panels Stacked =====
+  
         right_container = tk.Frame(main_frame, bg=self.COLORS['bg_dark'])
         right_container.grid(row=0, column=2, sticky='nsew', padx=(15, 0))
 
-        # Configure right container rows
-        right_container.grid_rowconfigure(0, weight=2)  # History gets more space
-        right_container.grid_rowconfigure(1, weight=0)  # Status compact
-        right_container.grid_rowconfigure(2, weight=0)  # Score compact
+        right_container.grid_rowconfigure(0, weight=2) 
+        right_container.grid_rowconfigure(1, weight=0) 
+        right_container.grid_rowconfigure(2, weight=0) 
         right_container.grid_columnconfigure(0, weight=1)
 
-        # ----- PANEL 1: Move History -----
+        # ----- Move History -----
         history_outer = tk.Frame(
             right_container,
             bg=self.COLORS['cyan'],
@@ -494,7 +470,7 @@ class PuzzleGameGUI:
         self.history.insert(tk.END, "═══════════════════════════════════\n\n", "header")
         self.history.config(state="disabled")
 
-        # ----- PANEL 2: System Status -----
+        # ----- System Status -----
         info_outer = tk.Frame(
             right_container,
             bg=self.COLORS['magenta'],
@@ -543,7 +519,7 @@ class PuzzleGameGUI:
         )
         self.position_label.pack(pady=3)
 
-        # ----- PANEL 3: Scoreboard -----
+        # ----- Scoreboard -----
         stats_outer = tk.Frame(
             right_container,
             bg=self.COLORS['orange'],
@@ -630,7 +606,7 @@ class PuzzleGameGUI:
             # Update timer display
             remaining = self.timer_max - self.timer_seconds
             if remaining <= 5:
-                # Warning color when time is running out
+                
                 self.timer_label.config(
                     text=f"⏱ TIME: {remaining}s",
                     fg=self.COLORS['red']
@@ -641,12 +617,12 @@ class PuzzleGameGUI:
                     fg=self.COLORS['yellow']
                 )
             
-            # Check if time expired
+   
             if self.timer_seconds >= self.timer_max:
                 self.on_timeout()
                 return
         else:
-            # CPU turn - show no timer
+            
             self.timer_label.config(text="⏱ CPU THINKING...")
         
         self.timer_id = self.root.after(1000, self.update_timer)
@@ -679,7 +655,7 @@ class PuzzleGameGUI:
         btn = self.buttons[label]
         original_text = btn.cget("text")
         
-        # Glitch animation sequence
+       
         def glitch_frame(count):
             if count > 0:
                 glitch = random.choice(self.glitch_chars)
@@ -723,7 +699,7 @@ class PuzzleGameGUI:
             else:
                 self.update_display()
         
-        pulse_frame(8, True)  # 8 pulses = 1.6 seconds of animation
+        pulse_frame(8, True) 
 
     def on_cell_click(self, label):
         if self.game_state.current_turn != 'Human' or self.game_state.game_over:
@@ -815,7 +791,7 @@ class PuzzleGameGUI:
         )
 
     def show_winner(self):
-        # Stop the timer
+ 
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
         
@@ -841,4 +817,5 @@ if __name__ == "__main__":
     root.geometry("1200x750")
     root.minsize(1100, 700)
     PuzzleGameGUI(root)
+
     root.mainloop()
