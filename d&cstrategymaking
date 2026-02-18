@@ -5,3 +5,21 @@ We do this by splitting the set of all candidate neighboring cells into smaller 
 recursively evaluated and sorted based on manhattan distance to the goal. 
 The solutions of these subproblems are finally combined to obtain a ordered list of candidate moves, from which the best feasible move is selected.
 
+
+Purely recursive decomposition:
+best = max(best, sub_score)
+- depth limited
+- recursive
+- branching on neighbours
+- combining with max
+
+Initial DP Strategy:
+Top-down dynamic programming:
+Without DP, recursion will recompute identical states many times.
+The function evaluate_best_score runs twice.
+KEY IDEA: BEFORE SOLVING A SUBPROBLEM, CHECK IF WE HAVE ALREADY SOLVED IT.
+
+
+
+
+
