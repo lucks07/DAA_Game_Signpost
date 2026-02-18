@@ -15,7 +15,7 @@ best = max(best, sub_score)
 
 Initial DP Strategy:
 Top-down dynamic programming:
-Without DP, recursion will recompute identical states many times.
+Without DP, recursion will recompute identical states many times
 The function evaluate_best_score runs twice.
 KEY IDEA: BEFORE SOLVING A SUBPROBLEM, CHECK IF WE HAVE ALREADY SOLVED IT.
 
