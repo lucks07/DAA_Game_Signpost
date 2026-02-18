@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox
 import random
+from collections import deque
 
 # ====================
 # GRAPH IMPLEMENTATION
@@ -135,10 +136,28 @@ class dncCPU:
         self.depth = depth
         self.memo = {} 
 
-    def distance_to_goal(self, label):
-        node = self.graph.nodes[label]
-        goal = self.graph.nodes['P']
-        return abs(node.row - goal.row) + abs(node.col - goal.col)
+
+    def bfs_distance_to_goal(self, start_label, visited_set):
+        if start_label == 'P':
+            return 0
+
+        queue = deque([(start_label, 0)])
+        seen = set([start_label])
+
+        while queue:
+            current, dist = queue.popleft()
+
+            for neighbor in self.graph.get_neighbors(current):
+                if neighbor in visited_set:
+                    continue
+                if neighbor == 'P':
+                    return dist + 1
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    queue.append((neighbor, dist + 1))
+
+        return float('inf')  # unreachable
+
 
     def build_candidates(self, current, visited_set, illegal_history):
         neighbors = self.graph.get_neighbors(current)
@@ -150,10 +169,14 @@ class dncCPU:
         candidates = primary or fallback or neighbors
         return candidates
 
-    def score_state(self, position):
+    def score_state(self, position,visited_set):
         if position == 'P':
             return 10_000
-        return -self.distance_to_goal(position)
+        dist = self.bfs_distance_to_goal(position, visited_set)
+        if dist == float('inf'):
+            return -10_000
+        return -dist
+
 
     def evaluate_best_score(self, current, depth, visited_set, illegal_history):
         # ── Dynamic Programming: check memo cache before recomputing ──
@@ -164,13 +187,13 @@ class dncCPU:
 
         # Base case
         if depth == 0 or current == 'P':
-            score = self.score_state(current)
+            score = self.score_state(current,visited_set)
             self.memo[state_key] = score         # store in DP table
             return score
 
         candidates = self.build_candidates(current, visited_set, illegal_history)
         if not candidates:
-            score = self.score_state(current)
+            score = self.score_state(current,visited_set)
             self.memo[state_key] = score         # store in DP table
             return score
 
@@ -190,7 +213,7 @@ class dncCPU:
             best = max(best, sub_score)
 
         if best == -10**9:
-            best = self.score_state(current)
+            best = self.score_state(current,visited_set)
 
         self.memo[state_key] = best              # store result in DP table
         return best
