@@ -18,6 +18,8 @@ class GraphNode:
         self.visit_order = None
 
 
+
+
 class PuzzleGraph:
     """Graph representation using adjacency list"""
     def __init__(self):
@@ -70,6 +72,7 @@ class GameState:
         if self.graph.nodes[target].visited:
             return False
         return True
+        
 
     def is_correct_move(self, target):
         try:
@@ -81,9 +84,12 @@ class GameState:
     def make_move(self, target):
         if self.game_over:
             return False, False
+            
 
         legal = self.is_legal_move(target)
         correct = self.is_correct_move(target)
+
+        
 
         if not legal or not correct:
             if self.current_turn == 'Human':
@@ -94,6 +100,7 @@ class GameState:
 
             self.switch_turn()
             return False, False
+            
 
         self.visit_count += 1
         node = self.graph.nodes[target]
@@ -101,6 +108,7 @@ class GameState:
         node.visit_order = self.visit_count
         self.current_position = target
 
+        
         if self.current_turn == 'Human':
             self.human_correct_moves += 1
         else:
@@ -115,6 +123,7 @@ class GameState:
 
     def switch_turn(self):
         self.current_turn = 'CPU' if self.current_turn == 'Human' else 'Human'
+        
 
     def determine_winner(self):
         if self.human_illegal_moves < self.cpu_illegal_moves:
@@ -157,6 +166,7 @@ class dncCPU:
                     queue.append((neighbor, dist + 1))
 
         return float('inf')  # unreachable
+        
 
 
     def build_candidates(self, current, visited_set, illegal_history):
@@ -168,6 +178,7 @@ class dncCPU:
         fallback = [n for n in neighbors if n not in visited_set]
         candidates = primary or fallback or neighbors
         return candidates
+        
 
     def score_state(self, position,visited_set):
         if position == 'P':
@@ -176,8 +187,9 @@ class dncCPU:
         if dist == float('inf'):
             return -10_000
         return -dist
+        
 
-
+#TOP-DOWN DP 
     def evaluate_best_score(self, current, depth, visited_set, illegal_history):
         # ── Dynamic Programming: check memo cache before recomputing ──
         state_key = (current, depth, frozenset(visited_set))
