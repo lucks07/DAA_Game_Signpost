@@ -6,6 +6,10 @@ recursively evaluated and sorted based on manhattan distance to the goal.
 The solutions of these subproblems are finally combined to obtain a ordered list of candidate moves, from which the best feasible move is selected.
 
 
+This strategy was changed to bfs. Our initial strategy was focused on locating coordinates, and using a base formula to find shortest path. However manhattan logic is only for vertical and horizontal paths and not diagonal.
+We found a more optimal solution. 
+
+
 Purely recursive decomposition:
 best = max(best, sub_score)
 - depth limited
