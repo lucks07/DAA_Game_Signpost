@@ -121,37 +121,7 @@ class GameState:
             self.winner = 'Draw'
 
 
-# ====================
-# CPU PLAYER — Quadrant-based Divide & Conquer + DP
-#
-# TRUE Divide & Conquer design (NO solution_path used):
-# ──────────────────────────────────────────────────────
-# The 4×4 grid is physically partitioned into four 2×2 quadrants:
-#
-#   Q0 (top-left)  | Q1 (top-right)
-#   ───────────────┼───────────────
-#   Q2 (bot-left)  | Q3 (bot-right)
-#
-# DIVIDE  : At the current position the unvisited nodes are assigned
-#           to their respective quadrant buckets.  Each quadrant bucket
-#           is a disjoint set — no node belongs to two buckets.
-#
-# CONQUER : solve_quadrant_visit() receives only its own bucket and
-#           entry node.  It finds the longest consecutive chain of that
-#           quadrant's nodes reachable from the entry via graph edges.
-#           It has ZERO knowledge of any other quadrant — truly
-#           independent subproblems.
-#           DP key: (entry, frozenset(q_bucket \ {entry})) — no global
-#           state required.
-#
-# COMBINE : combine_quadrant_visits() stitches quadrant visits together.
-#           After exhausting one quadrant's chain it looks for a
-#           cross-quadrant edge from the exit node, conquers the next
-#           quadrant, and recurses until all nodes are visited.
-#
-# DP      : Two memo tables — one per quadrant solver, one for the
-#           combiner — avoid recomputing identical states.
-# ====================
+
 
 class dncCPU:
     # ── Quadrant layout (rows 0-1 / cols 0-1 split) ──────────────────────
@@ -169,18 +139,8 @@ class dncCPU:
     def __init__(self, graph, game_state, depth_limit=2):
         self.graph       = graph
         self.game_state  = game_state
-        self.depth_limit = depth_limit  # kept for display consistency
+        self.depth_limit = depth_limit
 
-        # Two separate DP tables — one per layer of D&C
-        self.quadrant_dp = {}   # (entry, frozenset(q_remaining)) -> chain
-        self.combine_dp  = {}   # (cur,   frozenset(all_unvisited)) -> full_path
-
-    @property
-    def dp_memo(self):
-        """Single count for the status panel."""
-        return {**self.quadrant_dp, **self.combine_dp}
-
-    # ── helpers ──────────────────────────────────────────────────────────
 
     def _quadrant_of(self, label):
         for qid, members in self.QUADRANT_NODES.items():
@@ -188,134 +148,66 @@ class dncCPU:
                 return qid
         return None
 
-    # ── CONQUER: solve one quadrant visit in complete isolation ───────────
     def _solve_quadrant_visit(self, entry, q_remaining_fset):
-        """
-        CONQUER step — fully independent subproblem.
-
-        Starting at 'entry', walk as far as possible through
-        q_remaining_fset using real graph edges.  Only nodes that
-        belong to this quadrant's remaining set are collected; the
-        solver has NO knowledge of any other quadrant's state.
-
-        DP key: (entry, frozenset(q_remaining))
-        This is self-contained — no global visited set needed.
-
-        Returns the ordered chain of visited nodes (always non-empty
-        since it includes at least the entry node).
-        """
-        key = (entry, q_remaining_fset)
-        if key in self.quadrant_dp:
-            return self.quadrant_dp[key]
-
-        best = [entry]   # minimum: just the entry node itself
+   
+        best = [entry]   
 
         for nxt in self.graph.get_neighbors(entry):
             if nxt not in q_remaining_fset:
-                continue   # only collect THIS quadrant's unvisited nodes
+                continue   
             sub = self._solve_quadrant_visit(nxt, frozenset(q_remaining_fset - {nxt}))
             if len(sub) + 1 > len(best):
                 best = [entry] + sub
 
-        self.quadrant_dp[key] = best
         return best
 
-    # ── DIVIDE + COMBINE: find and stitch quadrant visits ────────────────
+  
     def _combine_quadrant_visits(self, cur, all_unvisited_fset, depth, illegal_history):
-        """
-        DIVIDE + COMBINE step — depth-limited lookahead causes real mistakes.
-
-        DIVIDE  — unvisited nodes are split into per-quadrant buckets via
-                  set intersection. Each bucket is disjoint.
-
-        COMBINE — try each legal neighbor (skipping known-bad moves from
-                  illegal_history) as the next step:
-                    1. DIVIDE: identify its quadrant bucket.
-                    2. CONQUER: solve that bucket independently.
-                    3. If depth > 0: verify the rest recursively.
-                       If depth == 0: accept the greedy chain with no
-                       global verification — this is where mistakes happen.
-
-        depth_limit controls foresight across quadrant boundaries:
-          - depth=0  →  purely greedy, most mistakes
-          - depth=2  →  looks 2 quadrant-hops ahead; makes natural errors
-                        at tricky cross-quadrant edges
-          - depth=∞  →  always correct (used as fallback)
-
-        DP key includes depth so shallow and deep calls don't pollute each other.
-        """
-        key = (cur, all_unvisited_fset, depth)
-        if key in self.combine_dp:
-            return self.combine_dp[key]
-
-        # Base case — nothing left to visit
+      
         if not all_unvisited_fset:
-            self.combine_dp[key] = [cur]
             return [cur]
 
         for nxt in self.graph.get_neighbors(cur):
             if nxt not in all_unvisited_fset:
                 continue
             if (cur, nxt) in illegal_history:
-                continue                          # skip moves known to be wrong
+                continue                         
 
             nxt_q = self._quadrant_of(nxt)
 
-            # ── DIVIDE: isolate this quadrant's unvisited bucket ──────────
+            
             q_bucket = frozenset(all_unvisited_fset & self.QUADRANT_NODES[nxt_q])
 
-            # ── CONQUER: solve this quadrant visit independently ──────────
+       
             chain = self._solve_quadrant_visit(nxt, frozenset(q_bucket - {nxt}))
 
-            # ── COMBINE: recurse or commit greedily ───────────────────────
+  
             remaining = frozenset(all_unvisited_fset - set(chain))
 
             if depth <= 0:
-                # Depth exhausted — commit to greedy chain without checking
-                # whether the rest of the graph is actually completable.
-                # This is the source of the CPU's natural mistakes.
-                full = [cur] + chain
-                self.combine_dp[key] = full
-                return full
+                return [cur] + chain
 
             rest = self._combine_quadrant_visits(
                 chain[-1], remaining, depth - 1, illegal_history)
 
             if rest is not None:
-                full = [cur] + chain + rest[1:]
-                self.combine_dp[key] = full
-                return full
+                return [cur] + chain + rest[1:]
 
-        self.combine_dp[key] = None
         return None
 
-    # ── main entry point ──────────────────────────────────────────────────
     def get_best_move(self):
-        """
-        Full D&C pipeline — never consults solution_path.
-
-        Runs with depth_limit first (makes natural greedy mistakes).
-        If depth-limited search returns nothing at all, falls back to
-        an unlimited search so the CPU is never completely stuck.
-        """
         cur           = self.game_state.current_position
         visited_set   = {lbl for lbl, n in self.graph.nodes.items() if n.visited}
         all_unvisited = frozenset(self.graph.nodes.keys()) - visited_set
         illegal_hist  = self.game_state.cpu_illegal_history
 
-        self.quadrant_dp.clear()
-        self.combine_dp.clear()
-
-        # ── depth-limited attempt (natural mistakes occur here) ───────────
         result = self._combine_quadrant_visits(
             cur, all_unvisited, self.depth_limit, illegal_hist)
 
         if result and len(result) >= 2:
             return result[1]
-
-        # ── unlimited fallback (no mistakes, just finds any legal path) ───
         result = self._combine_quadrant_visits(
-            cur, all_unvisited, 999, illegal_hist)
+            cur, all_unvisited, 999, set())
 
         if result and len(result) >= 2:
             return result[1]
@@ -337,9 +229,6 @@ class dncCPU:
         return random.choice(list(self.graph.nodes.keys()))
 
 
-# ====================
-# GUI
-# ====================
 
 class PuzzleGameGUI:
     C = {
@@ -374,9 +263,6 @@ class PuzzleGameGUI:
         self.update_display()
         self.start_timer()
 
-    # ────────────────────────────────────────────────
-    # Puzzle / state factory
-    # ────────────────────────────────────────────────
 
     def _build_puzzle(self):
         """(Re-)create graph, game state, and CPU player."""
@@ -411,9 +297,7 @@ class PuzzleGameGUI:
         )
         return graph
 
-    # ────────────────────────────────────────────────
-    # GUI construction
-    # ────────────────────────────────────────────────
+   
 
     def _label(self, parent, text, font, fg=None, bg=None, anchor='center', **kw):
         return tk.Label(
@@ -424,11 +308,11 @@ class PuzzleGameGUI:
         )
 
     def create_gui(self):
-        # ── Root padding frame ──────────────────────
+    
         root_pad = tk.Frame(self.root, bg=self.C['bg'])
         root_pad.pack(fill='both', expand=True, padx=28, pady=22)
 
-        # ── Header ──────────────────────────────────
+       
         header = tk.Frame(root_pad, bg=self.C['bg'])
         header.pack(fill='x', pady=(0, 20))
 
@@ -441,7 +325,7 @@ class PuzzleGameGUI:
 
         tk.Frame(root_pad, bg=self.C['border'], height=1).pack(fill='x', pady=(0, 18))
 
-        # ── Body ────────────────────────────────────
+    
         body = tk.Frame(root_pad, bg=self.C['bg'])
         body.pack(fill='both', expand=True)
         body.grid_columnconfigure(0, weight=5, minsize=520)
@@ -449,7 +333,7 @@ class PuzzleGameGUI:
         body.grid_columnconfigure(2, weight=4, minsize=340)
         body.grid_rowconfigure(0, weight=1)
 
-        # ── LEFT: Grid card ─────────────────────────
+   
         left = tk.Frame(body, bg=self.C['bg'])
         left.grid(row=0, column=0, sticky='nsew')
         left.grid_rowconfigure(0, weight=1)
@@ -495,10 +379,9 @@ class PuzzleGameGUI:
         # padding bottom row
         tk.Frame(grid_card, bg=self.C['surface'], height=14).grid(row=6, column=0, columnspan=4)
 
-        # ── Vertical divider ────────────────────────
         tk.Frame(body, bg=self.C['border'], width=1).grid(row=0, column=1, sticky='ns', padx=20)
 
-        # ── RIGHT: Panels ───────────────────────────
+
         right = tk.Frame(body, bg=self.C['bg'])
         right.grid(row=0, column=2, sticky='nsew')
         right.grid_rowconfigure(0, weight=1)
@@ -506,7 +389,6 @@ class PuzzleGameGUI:
         right.grid_rowconfigure(2, weight=0)
         right.grid_columnconfigure(0, weight=1)
 
-        # ── Panel 1: Move History ────────────────────
         hist_card = tk.Frame(right, bg=self.C['surface'],
                              highlightbackground=self.C['border'], highlightthickness=1)
         hist_card.grid(row=0, column=0, sticky='nsew', pady=(0, 12))
@@ -531,9 +413,9 @@ class PuzzleGameGUI:
         self.history.tag_config("meta",     foreground=self.C['text_dim'])
         self.history.config(state='disabled')
         self._hist("Game started — make your move.", "meta")
-        self._hist("CPU: Quadrant D&C, no solution path.", "meta")
+        self._hist("CPU: Quadrant D&C solver.", "meta")
 
-        # ── Panel 2: Status ──────────────────────────
+     
         status_card = tk.Frame(right, bg=self.C['surface'],
                                highlightbackground=self.C['border'], highlightthickness=1)
         status_card.grid(row=1, column=0, sticky='ew', pady=(0, 12))
@@ -564,10 +446,8 @@ class PuzzleGameGUI:
         self.turn_label     = stat_row("Turn")
         self.timer_label    = stat_row("Time left")
         self.position_label = stat_row("Position")
-        self.dp_cache_label = stat_row("DP Cache")
 
         self.turn_label.config(fg=self.C['accent_blue'])
-        self.dp_cache_label.config(fg=self.C['accent_amber'], text="0 states")
 
         tk.Frame(status_card, bg=self.C['surface'], height=6).pack()
 
@@ -617,8 +497,6 @@ class PuzzleGameGUI:
         tk.Frame(score_card, bg=self.C['surface'], height=8).pack()
 
     # ────────────────────────────────────────────────
-    # Helpers
-    # ────────────────────────────────────────────────
 
     def _hist(self, text, tag="move_ok"):
         self.history.config(state='normal')
@@ -626,9 +504,6 @@ class PuzzleGameGUI:
         self.history.config(state='disabled')
         self.history.see(tk.END)
 
-    # ────────────────────────────────────────────────
-    # Timer
-    # ────────────────────────────────────────────────
 
     def start_timer(self):
         self.timer_seconds = 0
@@ -689,8 +564,7 @@ class PuzzleGameGUI:
         move = self.cpu_player.get_best_move()
         success, _ = self.game_state.make_move(move)
         if success:
-            self._hist(
-                f"CPU    →  {move}  [DP:{len(self.cpu_player.dp_memo)} states]", "move_ok")
+            self._hist(f"CPU    →  {move}", "move_ok")
             self.flash_cpu(move)
         else:
             self._hist(f"CPU    →  {move}  (invalid)", "move_err")
@@ -764,7 +638,6 @@ class PuzzleGameGUI:
         node = self.graph.nodes[self.game_state.current_position]
         self.position_label.config(
             text=f"{self.game_state.current_position}  (step {node.visit_order})")
-        self.dp_cache_label.config(text=f"{len(self.cpu_player.dp_memo)} states")
 
         gs = self.game_state
         self.human_correct_lbl.config(text=str(gs.human_correct_moves))
@@ -772,9 +645,6 @@ class PuzzleGameGUI:
         self.cpu_correct_lbl.config(text=str(gs.cpu_correct_moves))
         self.cpu_errors_lbl.config(text=str(gs.cpu_illegal_moves))
 
-    # ────────────────────────────────────────────────
-    # Game over + Reset
-    # ────────────────────────────────────────────────
 
     def show_winner(self):
         if self.timer_id:
@@ -814,13 +684,12 @@ class PuzzleGameGUI:
         self.history.delete('1.0', tk.END)
         self.history.config(state='disabled')
         self._hist("Game reset — make your move.", "meta")
-        self._hist("CPU: Quadrant D&C, no solution path.", "meta")
+        self._hist("CPU: Quadrant D&C solver.", "meta")
 
         self.human_correct_lbl.config(text="0")
         self.human_errors_lbl.config(text="0")
         self.cpu_correct_lbl.config(text="0")
         self.cpu_errors_lbl.config(text="0")
-        self.dp_cache_label.config(text="0 states")
 
         self.update_display()
         self.timer_seconds = 0
