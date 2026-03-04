@@ -77,6 +77,72 @@ def random_hamiltonian_path(base_graph, start='A', goal='P'):
 
     ok = backtrack(start)
     return path if ok else None
+def generate_unique_puzzle_from_base(base_graph, decoy_target=14, max_tries=5000):
+    """
+    Generates a new puzzle graph:
+    - choose random Hamiltonian solution path in base_graph
+    - start edges = only the path edges (unique)
+    - add decoy edges while keeping uniqueness (solution count == 1)
+
+    decoy_target: how many extra edges you *try* to add beyond the path edges
+    max_tries: safety loop cap
+    """
+    # 1) get random solution path
+    sol = random_hamiltonian_path(base_graph, start='A', goal='P')
+    if sol is None:
+        raise RuntimeError("No Hamiltonian path exists in base graph. Add more base edges.")
+
+    # 2) build puzzle graph with same nodes but fresh adjacency
+    puzzle = PuzzleGraph()
+    for lbl, n in base_graph.nodes.items():
+        puzzle.add_node(lbl, n.row, n.col, n.arrow_direction)
+
+    # 3) add ONLY the solution edges first
+    solution_edges = set()
+    for i in range(len(sol) - 1):
+        u, v = sol[i], sol[i + 1]
+        puzzle.add_edge(u, v)
+        solution_edges.add((u, v))
+
+    # 4) candidate decoys = base edges not in solution
+    candidates = []
+    for u, outs in base_graph.adjacency_list.items():
+        for v in outs:
+            if (u, v) not in solution_edges:
+                candidates.append((u, v))
+
+    random.shuffle(candidates)
+
+    # 5) add decoys while preserving uniqueness
+    added = 0
+    tries = 0
+    idx = 0
+
+    while added < decoy_target and tries < max_tries and idx < len(candidates):
+        tries += 1
+        u, v = candidates[idx]
+        idx += 1
+
+        # temporarily add
+        puzzle.adjacency_list[u].append(v)
+
+        # check uniqueness
+        cnt = count_hamiltonian_solutions(puzzle, start='A', goal='P', cutoff=2)
+        if cnt == 1:
+            added += 1
+        else:
+            # revert
+            puzzle.adjacency_list[u].pop()
+
+    # 6) set arrows to point along the TRUE solution (visual hint)
+    for i in range(len(sol) - 1):
+        a = puzzle.nodes[sol[i]]
+        b = puzzle.nodes[sol[i + 1]]
+        a.arrow_direction = arrow_from_to(a, b)
+    puzzle.nodes['P'].arrow_direction = '★'
+
+    puzzle.set_solution_path(sol)
+    return puzzle
 class GraphNode:
     def __init__(self, label, row, col, arrow_direction):
         self.label = label
