@@ -16,7 +16,6 @@ except Exception:
 
 
 def _make_sound(samples: list, volume: float = 0.6):
-    """Convert a list of float samples [-1,1] into a pygame Sound object."""
     if not SOUND_AVAILABLE:
         return None
     peak = volume * 32767
@@ -26,7 +25,6 @@ def _make_sound(samples: list, volume: float = 0.6):
 
 
 def _env(i: int, n: int, a_n: int, d_n: int) -> float:
-    """ADSR-style envelope value at sample i."""
     if i < a_n:
         return i / a_n if a_n else 1.0
     elif i >= n - d_n:
@@ -60,6 +58,7 @@ def _square_samples(freq: float, duration: float, sr: int = 44100,
 
 def _triangle_samples(freq: float, duration: float, sr: int = 44100,
                       attack: float = 0.005, decay: float = 0.06) -> list:
+    """Triangle wave — warmer than square, punchier than sine. Great for bass notes."""
     n = int(sr * duration)
     a_n, d_n = int(attack * sr), int(decay * sr)
     out = []
@@ -93,7 +92,6 @@ class SoundManager:
     def _build_sounds(self):
         sr = 44100
 
-        # ── Correct human move: crispy 8-bit two-note coin pickup  ✔
         self._sounds["correct"] = _make_sound(_concat(
             _square_samples(659.25, 0.06, sr, attack=0.003, decay=0.02, harmonics=6),
             _square_samples(987.77, 0.10, sr, attack=0.003, decay=0.07, harmonics=6),
@@ -163,7 +161,6 @@ class SoundManager:
             _triangle_samples(246.94, 0.60, sr, attack=0.010, decay=0.50),              # B3 long fade
         ), 0.55)
 
-        # ── Game reset: cheerful 8-bit upward ping
         self._sounds["reset"] = _make_sound(_concat(
             _square_samples(440, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
             _square_samples(554.37, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
@@ -451,44 +448,68 @@ class GameState:
 # ====================
 
 class BacktrackingCPU:
+    """
+    THE BUG THAT CAUSED 'CPU has no legal moves' FOREVER:
+      backtrack() mutated visited_set in-place and when it found a path it
+      returned immediately without removing the nodes it had added.
+      So after backtrack() returned, visited_set contained ALL nodes →
+      legal_moves was always empty → get_best_move returned None every time.
+
+    THE FIX:
+      Pass a copy of visited_set into backtrack() so the caller's set is
+      never touched. Then mistakes are implemented cleanly: if the current
+      node has >1 legal neighbour we occasionally pick a wrong one.
+    """
+    MISTAKE_CHANCE = 0.55   # 55 % chance CPU picks a wrong neighbour (when one exists)
+
     def __init__(self, graph, game_state):
-        self.graph = graph
+        self.graph      = graph
         self.game_state = game_state
         self.goal_label = 'P'
         self.all_labels = set(self.graph.nodes.keys())
 
-    def is_legal(self, cur, nxt, visited_set):
-        return (nxt in self.graph.get_neighbors(cur)) and (nxt not in visited_set)
-
-    def backtrack(self, cur, visited_set, path):
-        if cur == self.goal_label and len(visited_set) == len(self.all_labels):
+    def backtrack(self, cur, visited_copy, path):
+        """Runs on a COPY of visited_set — never mutates the caller's set."""
+        if cur == self.goal_label and len(visited_copy) == len(self.all_labels):
             return list(path)
         for nxt in self.graph.get_neighbors(cur):
-            if not self.is_legal(cur, nxt, visited_set):
+            if nxt in visited_copy:
                 continue
-            visited_set.add(nxt)
+            visited_copy.add(nxt)
             path.append(nxt)
-            result = self.backtrack(nxt, visited_set, path)
+            result = self.backtrack(nxt, visited_copy, path)
             if result is not None:
                 return result
-            visited_set.remove(nxt)
             path.pop()
+            visited_copy.remove(nxt)
         return None
 
     def get_best_move(self):
-        cur = self.game_state.current_position
+        cur         = self.game_state.current_position
+        # Original visited set — never passed directly into backtrack
         visited_set = {lbl for lbl, node in self.graph.nodes.items() if node.visited}
-        result = self.backtrack(cur, visited_set, [cur])
+
+        # Legal neighbours = arrow-reachable AND not yet visited
+        legal = [n for n in self.graph.get_neighbors(cur) if n not in visited_set]
+
+        if not legal:
+            return None     # genuine dead-end (shouldn't happen in a valid puzzle)
+
+        # Find the correct move — pass a COPY so visited_set stays clean
+        correct = None
+        result  = self.backtrack(cur, visited_set | {cur}, [cur])
         if result and len(result) > 1:
-            return result[1]
-        candidates = [
-            n for n in self.graph.get_neighbors(cur)
-            if self.is_legal(cur, n, visited_set) and (cur, n) not in self.game_state.cpu_illegal_history
-        ]
-        if candidates:
-            return random.choice(candidates)
-        candidates = [n for n in self.graph.get_neighbors(cur) if self.is_legal(cur, n, visited_set)]
-        return random.choice(candidates) if candidates else None
+            correct = result[1]
+
+        # Wrong options = legal neighbours that are NOT the correct move
+        wrong = [n for n in legal if n != correct]
+
+        # Only blunder when a genuinely wrong option exists
+        # (no fake errors on forced single-neighbour moves)
+        if wrong and correct and random.random() < self.MISTAKE_CHANCE:
+            return random.choice(wrong)     # deliberate wrong pick → counted as error
+
+        return correct if correct else random.choice(legal)
 
 
 # ====================
@@ -838,7 +859,7 @@ class PuzzleGameGUI:
             self.play("cpu_move")                      # ← CPU move beep
             self.flash_cpu(move)
         else:
-            self._hist(f"CPU    >  {move}  (invalid)", "move_err")
+            self._hist(f"CPU    >  {move}  (wrong guess! 🎲)", "move_err")
             self.play("error")                         # ← error buzz
             self.flash_error(move)
 
