@@ -5,7 +5,78 @@ import random
 # ====================
 # GRAPH IMPLEMENTATION
 # ====================
+DIR_TO_ARROW = {
+    (-1,  0): '↑', (1,  0): '↓', (0, -1): '←', (0,  1): '→',
+    (-1, -1): '↖', (-1, 1): '↗', (1, -1): '↙', (1,  1): '↘'
+}
 
+def arrow_from_to(node_a, node_b):
+    dr = node_b.row - node_a.row
+    dc = node_b.col - node_a.col
+    dr = 0 if dr == 0 else (1 if dr > 0 else -1)
+    dc = 0 if dc == 0 else (1 if dc > 0 else -1)
+    return DIR_TO_ARROW.get((dr, dc), '•')
+
+
+
+def count_hamiltonian_solutions(graph, start='A', goal='P', cutoff=2):
+    """
+    Counts number of Hamiltonian paths from start to goal
+    that visit ALL nodes exactly once.
+    Stops early at 'cutoff' (default 2).
+    """
+    all_nodes = set(graph.nodes.keys())
+    neighbors = graph.get_neighbors
+
+    visited = set([start])
+
+    def dfs(cur):
+        # reached goal
+        if cur == goal:
+            return 1 if visited == all_nodes else 0
+
+        total = 0
+        for nxt in neighbors(cur):
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            total += dfs(nxt)
+            visited.remove(nxt)
+
+            if total >= cutoff:
+                return cutoff
+        return total
+
+    return dfs(start)
+def random_hamiltonian_path(base_graph, start='A', goal='P'):
+    """
+    Shuffled backtracking DFS to get ONE random Hamiltonian path from start to goal.
+    Returns list like ['A', ..., 'P'] or None.
+    """
+    all_nodes = set(base_graph.nodes.keys())
+    visited = set([start])
+    path = [start]
+
+    def backtrack(cur):
+        if cur == goal and visited == all_nodes:
+            return True
+
+        nbrs = list(base_graph.get_neighbors(cur))
+        random.shuffle(nbrs)
+
+        for nxt in nbrs:
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            path.append(nxt)
+            if backtrack(nxt):
+                return True
+            path.pop()
+            visited.remove(nxt)
+        return False
+
+    ok = backtrack(start)
+    return path if ok else None
 class GraphNode:
     def __init__(self, label, row, col, arrow_direction):
         self.label = label
@@ -45,21 +116,16 @@ class PuzzleGraph:
 
 def generate_random_solution(graph):
     """
-    Uses shuffled backtracking DFS to find a
-    random valid path that visits ALL nodes exactly
+    Uses shuffled backtracking DFS to find a random valid path that visits ALL nodes exactly
     once, starting at A and ending at P.
-
-    The shuffle is what makes it random each game.
     """
     all_labels = set(graph.nodes.keys())
     goal = 'P'
 
     def backtrack(cur, visited, path):
-        # Base case: visited every node and reached goal
         if len(visited) == len(all_labels) and cur == goal:
             return list(path)
 
-        # Shuffle neighbors -> different path each game
         neighbors = list(graph.get_neighbors(cur))
         random.shuffle(neighbors)
 
@@ -67,7 +133,6 @@ def generate_random_solution(graph):
             if nxt in visited:
                 continue
 
-            # Make choice
             visited.add(nxt)
             path.append(nxt)
 
@@ -75,17 +140,16 @@ def generate_random_solution(graph):
             if result is not None:
                 return result
 
-            # Undo choice (backtrack)
             visited.remove(nxt)
             path.pop()
 
-        return None  # dead end
+        return None
 
     visited = {'A'}
     path = ['A']
     result = backtrack('A', visited, path)
 
-    # Safety fallback if no path found
+    # Fallback if no Hamiltonian path found (shouldn't happen often)
     if result is None:
         return ['A','K','F','H','G','E','B','L','D','C','I','J','M','N','O','P']
     return result
@@ -118,6 +182,8 @@ class GameState:
     def is_legal_move(self, target):
         if target not in self.graph.get_neighbors(self.current_position):
             return False
+        if target not in self.graph.nodes:
+            return False
         if self.graph.nodes[target].visited:
             return False
         return True
@@ -133,8 +199,12 @@ class GameState:
         if self.game_over:
             return False, False
 
-        legal = self.is_legal_move(target)
-        correct = self.is_correct_move(target)
+        if target is None or target not in self.graph.nodes:
+            legal = False
+            correct = False
+        else:
+            legal = self.is_legal_move(target)
+            correct = self.is_correct_move(target)
 
         if not legal or not correct:
             if self.current_turn == 'Human':
@@ -177,8 +247,6 @@ class GameState:
 
 # ====================
 # CPU PLAYER — Pure Backtracking DFS
-# No memoization, no DP, no DnC.
-# Tries each neighbor, recurses, undoes if dead end.
 # ====================
 
 class BacktrackingCPU:
@@ -192,11 +260,6 @@ class BacktrackingCPU:
         return (nxt in self.graph.get_neighbors(cur)) and (nxt not in visited_set)
 
     def backtrack(self, cur, visited_set, path):
-        """
-        Pure backtracking DFS.
-        Base case : all nodes visited AND at goal.
-        Recursive : try each neighbor -> recurse -> undo if no solution.
-        """
         if cur == self.goal_label and len(visited_set) == len(self.all_labels):
             return list(path)
 
@@ -204,7 +267,6 @@ class BacktrackingCPU:
             if not self.is_legal(cur, nxt, visited_set):
                 continue
 
-            # Make choice
             visited_set.add(nxt)
             path.append(nxt)
 
@@ -212,7 +274,6 @@ class BacktrackingCPU:
             if result is not None:
                 return result
 
-            # Undo choice (backtrack)
             visited_set.remove(nxt)
             path.pop()
 
@@ -223,19 +284,19 @@ class BacktrackingCPU:
         visited_set = {lbl for lbl, node in self.graph.nodes.items() if node.visited}
 
         result = self.backtrack(cur, visited_set, [cur])
-
         if result and len(result) > 1:
-            return result[1]  # next step in solution
+            return result[1]
 
         # Fallback: any legal move not previously failed
-        candidates = [n for n in self.graph.get_neighbors(cur)
-                      if self.is_legal(cur, n, visited_set)
-                      and (cur, n) not in self.game_state.cpu_illegal_history]
+        candidates = [
+            n for n in self.graph.get_neighbors(cur)
+            if self.is_legal(cur, n, visited_set) and (cur, n) not in self.game_state.cpu_illegal_history
+        ]
         if candidates:
             return random.choice(candidates)
 
-        candidates = [n for n in self.graph.get_neighbors(cur)
-                      if self.is_legal(cur, n, visited_set)]
+        # Last fallback: any legal move
+        candidates = [n for n in self.graph.get_neighbors(cur) if self.is_legal(cur, n, visited_set)]
         return random.choice(candidates) if candidates else None
 
 
@@ -264,17 +325,18 @@ class PuzzleGameGUI:
         self.root = root
         self.root.title("Signpost - Puzzle")
         self.root.configure(bg=self.C['bg'])
+
         self.buttons = {}
         self.timer_seconds = 0
         self.timer_max = 15
         self.timer_id = None
+
         self._build_puzzle()
         self.create_gui()
         self.update_display()
         self.start_timer()
 
     def _build_puzzle(self):
-        """Build graph then generate a fresh random solution path."""
         self.graph = self._create_graph()
         path = generate_random_solution(self.graph)
         self.graph.set_solution_path(path)
@@ -282,7 +344,6 @@ class PuzzleGameGUI:
         self.cpu_player = BacktrackingCPU(self.graph, self.game_state)
 
     def _create_graph(self):
-        """Fixed nodes + edges. Solution path changes every game."""
         graph = PuzzleGraph()
         grid = [
             ('A',0,0,'↘'),('B',0,1,'↘'),('C',0,2,'↙'),('D',0,3,'←'),
@@ -304,10 +365,12 @@ class PuzzleGameGUI:
         return graph
 
     def _label(self, parent, text, font, fg=None, bg=None, anchor='center', **kw):
-        return tk.Label(parent, text=text, font=font,
-                        fg=fg or self.C['text_primary'],
-                        bg=bg or self.C['surface'],
-                        anchor=anchor, **kw)
+        return tk.Label(
+            parent, text=text, font=font,
+            fg=fg or self.C['text_primary'],
+            bg=bg or self.C['surface'],
+            anchor=anchor, **kw
+        )
 
     def create_gui(self):
         root_pad = tk.Frame(self.root, bg=self.C['bg'])
@@ -338,9 +401,11 @@ class PuzzleGameGUI:
         grid_card = tk.Frame(left, bg=self.C['surface'],
                              highlightbackground=self.C['border'], highlightthickness=1)
         grid_card.grid(row=0, column=0, sticky='')
+
         self._label(grid_card, "GRID MATRIX", font=('Helvetica', 11, 'bold'),
-                    fg=self.C['text_secondary'], bg=self.C['surface']
-                    ).grid(row=0, column=0, columnspan=4, pady=(18, 12), padx=22)
+                    fg=self.C['text_secondary'], bg=self.C['surface']).grid(
+                        row=0, column=0, columnspan=4, pady=(18, 12), padx=22
+                    )
 
         for label, node in self.graph.nodes.items():
             cell = tk.Frame(grid_card, bg=self.C['card'],
@@ -384,9 +449,11 @@ class PuzzleGameGUI:
         hist_card = tk.Frame(right, bg=self.C['surface'],
                              highlightbackground=self.C['border'], highlightthickness=1)
         hist_card.grid(row=0, column=0, sticky='nsew', pady=(0, 12))
+
         self._label(hist_card, "MOVE HISTORY", font=('Helvetica', 11, 'bold'),
-                    fg=self.C['text_secondary'], bg=self.C['surface']
-                    ).pack(anchor='w', padx=18, pady=(14, 8))
+                    fg=self.C['text_secondary'], bg=self.C['surface']).pack(
+                        anchor='w', padx=18, pady=(14, 8)
+                    )
         tk.Frame(hist_card, bg=self.C['divider'], height=1).pack(fill='x', padx=18)
 
         self.history = tk.Text(hist_card, width=34, height=13, font=('Courier New', 10),
@@ -398,6 +465,7 @@ class PuzzleGameGUI:
         self.history.tag_config("move_err", foreground=self.C['accent_red'])
         self.history.tag_config("meta",     foreground=self.C['text_dim'])
         self.history.config(state='disabled')
+
         self._hist("Game started — make your move.", "meta")
         self._hist("CPU: pure backtracking DFS.", "meta")
         self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
@@ -406,9 +474,11 @@ class PuzzleGameGUI:
         status_card = tk.Frame(right, bg=self.C['surface'],
                                highlightbackground=self.C['border'], highlightthickness=1)
         status_card.grid(row=1, column=0, sticky='ew', pady=(0, 12))
+
         self._label(status_card, "SYSTEM STATUS", font=('Helvetica', 11, 'bold'),
-                    fg=self.C['text_secondary'], bg=self.C['surface']
-                    ).pack(anchor='w', padx=18, pady=(14, 6))
+                    fg=self.C['text_secondary'], bg=self.C['surface']).pack(
+                        anchor='w', padx=18, pady=(14, 6)
+                    )
         tk.Frame(status_card, bg=self.C['divider'], height=1).pack(fill='x', padx=18)
 
         inner = tk.Frame(status_card, bg=self.C['surface'])
@@ -428,6 +498,7 @@ class PuzzleGameGUI:
         self.timer_label    = stat_row("Time left")
         self.position_label = stat_row("Position")
         self.algo_label     = stat_row("Algorithm")
+
         self.turn_label.config(fg=self.C['accent_blue'])
         self.algo_label.config(fg=self.C['accent_amber'], text="Backtracking DFS")
         tk.Frame(status_card, bg=self.C['surface'], height=6).pack()
@@ -436,9 +507,11 @@ class PuzzleGameGUI:
         score_card = tk.Frame(right, bg=self.C['surface'],
                               highlightbackground=self.C['border'], highlightthickness=1)
         score_card.grid(row=2, column=0, sticky='ew')
+
         self._label(score_card, "SCOREBOARD", font=('Helvetica', 11, 'bold'),
-                    fg=self.C['text_secondary'], bg=self.C['surface']
-                    ).pack(anchor='w', padx=18, pady=(14, 6))
+                    fg=self.C['text_secondary'], bg=self.C['surface']).pack(
+                        anchor='w', padx=18, pady=(14, 6)
+                    )
         tk.Frame(score_card, bg=self.C['divider'], height=1).pack(fill='x', padx=18)
 
         score_inner = tk.Frame(score_card, bg=self.C['surface'])
@@ -484,6 +557,7 @@ class PuzzleGameGUI:
     def update_timer(self):
         if self.game_state.game_over:
             return
+
         if self.game_state.current_turn == 'Human':
             self.timer_seconds += 1
             remaining = self.timer_max - self.timer_seconds
@@ -494,11 +568,13 @@ class PuzzleGameGUI:
                 return
         else:
             self.timer_label.config(text="CPU thinking...", fg=self.C['text_dim'])
+
         self.timer_id = self.root.after(1000, self.update_timer)
 
     def reset_timer(self):
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
+            self.timer_id = None
         self.timer_seconds = 0
         self.start_timer()
 
@@ -513,14 +589,17 @@ class PuzzleGameGUI:
     def on_cell_click(self, label):
         if self.game_state.current_turn != 'Human' or self.game_state.game_over:
             return
+
         success, _ = self.game_state.make_move(label)
         if success:
             self._hist(f"Human  >  {label}", "move_ok")
         else:
             self._hist(f"Human  >  {label}  (invalid)", "move_err")
             self.flash_error(label)
+
         self.reset_timer()
         self.update_display()
+
         if self.game_state.game_over:
             self.show_winner()
         else:
@@ -529,7 +608,16 @@ class PuzzleGameGUI:
     def cpu_turn(self):
         if self.game_state.game_over:
             return
+
         move = self.cpu_player.get_best_move()
+        if move is None:
+            self._hist("CPU has no legal moves!", "move_err")
+            self.game_state.cpu_illegal_moves += 1
+            self.game_state.switch_turn()
+            self.reset_timer()
+            self.update_display()
+            return
+
         success, _ = self.game_state.make_move(move)
         if success:
             self._hist(f"CPU    >  {move}  [Backtracking DFS]", "move_ok")
@@ -537,26 +625,41 @@ class PuzzleGameGUI:
         else:
             self._hist(f"CPU    >  {move}  (invalid)", "move_err")
             self.flash_error(move)
+
         self.reset_timer()
         self.update_display()
+
         if self.game_state.game_over:
             self.root.after(900, self.show_winner)
 
-   def flash_cell(self, label, colors):
+    def flash_cell(self, label, colors):
+        if not label or label not in self.buttons:
+            return
+
         def step(i):
             if i < len(colors):
-                  w = self.buttons[label]
-                  for k in ('frame', 'letter', 'arrow'):
-                           w[k].config(bg=colors[i])
-                  self.root.after(150, lambda: step(i+1))
+                w = self.buttons[label]
+                for k in ('frame', 'letter', 'arrow'):
+                    w[k].config(bg=colors[i])
+                self.root.after(150, lambda: step(i + 1))
             else:
-                  self.update_display()
+                self.update_display()
+
         step(0)
+
+    def flash_error(self, label):
+        self.flash_cell(label, [self.C['accent_red'], self.C['card'],
+                                self.C['accent_red'], self.C['card']])
+
+    def flash_cpu(self, label):
+        self.flash_cell(label, [self.C['accent_amber'], self.C['card'],
+                                self.C['accent_amber'], self.C['card']])
 
     def update_display(self):
         for label, node in self.graph.nodes.items():
             w = self.buttons[label]
             is_current = (label == self.game_state.current_position)
+
             if is_current:
                 bg, border, bw = '#1F3557', self.C['accent_blue'], 2
                 fg_l = fg_a = self.C['accent_blue']
@@ -570,16 +673,20 @@ class PuzzleGameGUI:
                 fg_l = self.C['text_primary']
                 fg_a = self.C['text_secondary']
                 w['letter'].config(text=label, font=('Helvetica', 18, 'bold'))
+
             w['frame'].config(bg=bg, highlightbackground=border, highlightthickness=bw)
             w['letter'].config(bg=bg, fg=fg_l)
             w['arrow'].config(bg=bg, fg=fg_a)
 
         turn = self.game_state.current_turn
-        self.turn_label.config(text=turn,
-            fg=self.C['accent_blue'] if turn == 'Human' else self.C['text_secondary'])
+        self.turn_label.config(
+            text=turn,
+            fg=self.C['accent_blue'] if turn == 'Human' else self.C['text_secondary']
+        )
+
         node = self.graph.nodes[self.game_state.current_position]
-        self.position_label.config(
-            text=f"{self.game_state.current_position}  (step {node.visit_order})")
+        self.position_label.config(text=f"{self.game_state.current_position}  (step {node.visit_order})")
+
         gs = self.game_state
         self.human_correct_lbl.config(text=str(gs.human_correct_moves))
         self.human_errors_lbl.config(text=str(gs.human_illegal_moves))
@@ -590,6 +697,7 @@ class PuzzleGameGUI:
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
+
         gs = self.game_state
         msg = (f"Winner:  {gs.winner}\n\n"
                f"Human    Correct: {gs.human_correct_moves}   Errors: {gs.human_illegal_moves}\n"
@@ -602,24 +710,31 @@ class PuzzleGameGUI:
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
+
         self._build_puzzle()
+
         for label, node in self.graph.nodes.items():
             w = self.buttons[label]
             bg = self.C['card']
             w['frame'].config(bg=bg, highlightbackground=self.C['border_light'], highlightthickness=1)
             w['letter'].config(text=label, bg=bg, fg=self.C['text_primary'], font=('Helvetica', 18, 'bold'))
             w['arrow'].config(text=node.arrow_direction, bg=bg, fg=self.C['text_secondary'])
+
         self.history.config(state='normal')
         self.history.delete('1.0', tk.END)
         self.history.config(state='disabled')
+
         self._hist("Game reset — new random path!", "meta")
         self._hist("CPU: pure backtracking DFS.", "meta")
         self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
+
         self.human_correct_lbl.config(text="0")
         self.human_errors_lbl.config(text="0")
         self.cpu_correct_lbl.config(text="0")
         self.cpu_errors_lbl.config(text="0")
+
         self.algo_label.config(text="Backtracking DFS")
+
         self.update_display()
         self.timer_seconds = 0
         self.start_timer()
