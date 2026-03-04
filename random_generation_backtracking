@@ -2,6 +2,185 @@ import tkinter as tk
 from tkinter import messagebox
 import random
 
+import math
+import struct
+import array as _array
+
+try:
+    import pygame
+    pygame.mixer.pre_init(frequency=44100, size=-16, channels=1, buffer=512)
+    pygame.mixer.init()
+    SOUND_AVAILABLE = True
+except Exception:
+    SOUND_AVAILABLE = False
+
+
+def _make_sound(samples: list, volume: float = 0.6):
+    """Convert a list of float samples [-1,1] into a pygame Sound object."""
+    if not SOUND_AVAILABLE:
+        return None
+    peak = volume * 32767
+    raw = _array.array('h', [max(-32768, min(32767, int(s * peak))) for s in samples])
+    sound = pygame.sndarray.make_sound(raw)
+    return sound
+
+
+def _env(i: int, n: int, a_n: int, d_n: int) -> float:
+    """ADSR-style envelope value at sample i."""
+    if i < a_n:
+        return i / a_n if a_n else 1.0
+    elif i >= n - d_n:
+        return max(0.0, (n - 1 - i) / d_n) if d_n else 1.0
+    return 1.0
+
+
+def _sine_samples(freq: float, duration: float, sr: int = 44100,
+                  attack: float = 0.01, decay: float = 0.05) -> list:
+    n = int(sr * duration)
+    a_n, d_n = int(attack * sr), int(decay * sr)
+    return [math.sin(2 * math.pi * freq * i / sr) * _env(i, n, a_n, d_n)
+            for i in range(n)]
+
+
+def _square_samples(freq: float, duration: float, sr: int = 44100,
+                    attack: float = 0.005, decay: float = 0.04,
+                    duty: float = 0.5, harmonics: int = 8) -> list:
+    n = int(sr * duration)
+    a_n, d_n = int(attack * sr), int(decay * sr)
+    out = []
+    for i in range(n):
+        t = i / sr
+        val = 0.0
+        for k in range(1, harmonics * 2, 2):          # odd harmonics only
+            val += math.sin(2 * math.pi * k * freq * t - math.pi * duty * k) / k
+        val *= (4 / math.pi)                           # normalise
+        out.append(val * _env(i, n, a_n, d_n))
+    return out
+
+
+def _triangle_samples(freq: float, duration: float, sr: int = 44100,
+                      attack: float = 0.005, decay: float = 0.06) -> list:
+    n = int(sr * duration)
+    a_n, d_n = int(attack * sr), int(decay * sr)
+    out = []
+    period = sr / freq
+    for i in range(n):
+        phase = (i % period) / period          # 0..1
+        val = 4 * abs(phase - 0.5) - 1.0      # triangle shape
+        out.append(val * _env(i, n, a_n, d_n))
+    return out
+
+
+def _silence(duration: float, sr: int = 44100) -> list:
+    return [0.0] * int(sr * duration)
+
+
+def _concat(*parts) -> list:
+    result = []
+    for p in parts:
+        result.extend(p)
+    return result
+
+
+class SoundManager:
+
+    def __init__(self):
+        self._sounds: dict = {}
+        if not SOUND_AVAILABLE:
+            return
+        self._build_sounds()
+
+    def _build_sounds(self):
+        sr = 44100
+
+        # ── Correct human move: crispy 8-bit two-note coin pickup  ✔
+        self._sounds["correct"] = _make_sound(_concat(
+            _square_samples(659.25, 0.06, sr, attack=0.003, decay=0.02, harmonics=6),
+            _square_samples(987.77, 0.10, sr, attack=0.003, decay=0.07, harmonics=6),
+        ), 0.52)
+
+        # ── CPU move: short low blip
+        self._sounds["cpu_move"] = _make_sound(
+            _square_samples(330, 0.07, sr, attack=0.003, decay=0.04, harmonics=4), 0.28)
+
+        # ── Invalid/error: harsh descending buzz
+        self._sounds["error"] = _make_sound(_concat(
+            _square_samples(220, 0.06, sr, attack=0.003, decay=0.02, harmonics=10),
+            _square_samples(164.81, 0.14, sr, attack=0.003, decay=0.10, harmonics=10),
+        ), 0.55)
+
+        # ── Timer tick: tiny 8-bit click
+        self._sounds["tick"] = _make_sound(
+            _square_samples(880, 0.025, sr, attack=0.002, decay=0.015, harmonics=3), 0.20)
+
+        # ── Timer warning: urgent high blip
+        self._sounds["tick_warn"] = _make_sound(
+            _square_samples(1320, 0.035, sr, attack=0.002, decay=0.02, harmonics=3), 0.40)
+
+        # ── Timeout: classic "fail" three-note drop
+        self._sounds["timeout"] = _make_sound(_concat(
+            _square_samples(392, 0.10, sr, attack=0.005, decay=0.04, harmonics=5),
+            _silence(0.02, sr),
+            _square_samples(311.13, 0.10, sr, attack=0.005, decay=0.04, harmonics=5),
+            _silence(0.02, sr),
+            _square_samples(233.08, 0.22, sr, attack=0.005, decay=0.16, harmonics=5),
+        ), 0.55)
+
+        #   Arpeggio burst → staccato phrase → triumphant held finish
+        self._sounds["win"] = _make_sound(_concat(
+            # rapid arpeggio burst (G5-C6-E6)
+            _square_samples(783.99,  0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _square_samples(1046.50, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _square_samples(1318.51, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _silence(0.04, sr),
+            # staccato melody phrase
+            _square_samples(783.99,  0.09, sr, attack=0.004, decay=0.03, harmonics=7),  # G5
+            _silence(0.025, sr),
+            _square_samples(1046.50, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),  # C6
+            _silence(0.025, sr),
+            _square_samples(1318.51, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),  # E6
+            _silence(0.025, sr),
+            # held high note then step down and soar back up
+            _square_samples(1567.98, 0.18, sr, attack=0.004, decay=0.05, harmonics=7),  # G6
+            _silence(0.03, sr),
+            _square_samples(1318.51, 0.07, sr, attack=0.003, decay=0.02, harmonics=7),  # E6
+            _silence(0.02, sr),
+            _square_samples(1567.98, 0.45, sr, attack=0.005, decay=0.35, harmonics=7),  # G6 long
+        ), 0.50)
+
+        #   Descending chromatic sadness with triangle bass undertone
+        self._sounds["lose"] = _make_sound(_concat(
+            _square_samples(493.88, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),   # B4
+            _silence(0.025, sr),
+            _square_samples(369.99, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),   # F#4
+            _silence(0.025, sr),
+            _triangle_samples(311.13, 0.13, sr, attack=0.008, decay=0.05),              # Eb4 (warmer)
+            _silence(0.015, sr),
+            _square_samples(329.63, 0.08, sr, attack=0.005, decay=0.03, harmonics=5),   # E4
+            _silence(0.015, sr),
+            _triangle_samples(311.13, 0.10, sr, attack=0.005, decay=0.04),              # Eb4
+            _silence(0.03, sr),
+            _triangle_samples(246.94, 0.60, sr, attack=0.010, decay=0.50),              # B3 long fade
+        ), 0.55)
+
+        # ── Game reset: cheerful 8-bit upward ping
+        self._sounds["reset"] = _make_sound(_concat(
+            _square_samples(440, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
+            _square_samples(554.37, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
+            _square_samples(659.25, 0.09,  sr, attack=0.003, decay=0.06, harmonics=5),
+        ), 0.42)
+
+    def play(self, name: str):
+        if not SOUND_AVAILABLE:
+            return
+        snd = self._sounds.get(name)
+        if snd:
+            try:
+                snd.play()
+            except Exception:
+                pass
+
+
 # ---------- Arrow helpers ----------
 DIR_TO_ARROW = {
     (-1,  0): '↑', (1,  0): '↓', (0, -1): '←', (0,  1): '→',
@@ -55,17 +234,6 @@ class PuzzleGraph:
 
 # ====================
 # PUZZLE GENERATOR
-# Core Signpost rule:
-#   Each node has ONE arrow direction.
-#   Its edges = ALL grid cells reachable by moving in that direction
-#   (any distance along that ray, like a bishop/rook in chess).
-#
-# Generation process:
-#   1. Find a random Hamiltonian path A→P on the full king-move graph
-#   2. Assign each node's arrow = direction toward its NEXT node in the path
-#   3. Build edges = every node reachable along that arrow ray
-#      (this automatically includes the correct next node, plus decoys)
-#   4. 'P' gets the star ★ and no outgoing edges
 # ====================
 
 GRID_LABELS = [
@@ -78,7 +246,6 @@ ROWS, COLS = 4, 4
 
 
 def build_label_grid():
-    """Returns dict: label -> (row, col) and (row,col) -> label"""
     label_to_pos = {}
     pos_to_label = {}
     for r in range(ROWS):
@@ -90,10 +257,6 @@ def build_label_grid():
 
 
 def all_nodes_in_direction(row, col, dr, dc, pos_to_label):
-    """
-    Returns all grid labels reachable by stepping (dr, dc) repeatedly from (row, col).
-    This implements the Signpost ray rule: arrow points to ALL cells in that direction.
-    """
     results = []
     r, c = row + dr, col + dc
     while 0 <= r < ROWS and 0 <= c < COLS:
@@ -104,12 +267,6 @@ def all_nodes_in_direction(row, col, dr, dc, pos_to_label):
 
 
 def random_hamiltonian_path_king(label_to_pos, pos_to_label, start='A', goal='P'):
-    """
-    Finds a random Hamiltonian path from start to goal using king moves (8-directional,
-    any distance — i.e. the path only moves one step at a time but considers all 8 neighbors).
-    We use single-step king moves for the PATH (so each step moves to an adjacent cell),
-    which ensures the arrow direction is well-defined.
-    """
     all_labels = set(label_to_pos.keys())
     visited = {start}
     path = [start]
@@ -147,18 +304,9 @@ def random_hamiltonian_path_king(label_to_pos, pos_to_label, start='A', goal='P'
 
 
 def generate_signpost_puzzle():
-    """
-    Generates a valid Signpost puzzle:
-    - Random Hamiltonian path A→P
-    - Each node's arrow = direction to next node in path
-    - Each node's edges = ALL cells along that arrow ray (correct next + decoys)
-    - 'P' has no outgoing edges (★)
-    """
     label_to_pos, pos_to_label = build_label_grid()
-
-    # 1. Find random Hamiltonian path
     path = None
-    for _ in range(200):  # retry if backtracking fails
+    for _ in range(200):
         path = random_hamiltonian_path_king(label_to_pos, pos_to_label)
         if path is not None:
             break
@@ -166,41 +314,29 @@ def generate_signpost_puzzle():
     if path is None:
         raise RuntimeError("Could not find Hamiltonian path after many tries.")
 
-    # 2. Build puzzle graph
     graph = PuzzleGraph()
     for lbl, (r, c) in label_to_pos.items():
-        graph.add_node(lbl, r, c, '•')  # arrow set below
+        graph.add_node(lbl, r, c, '•')
 
-    # 3. For each node (except P), set arrow = direction to next in path
-    #    and add edges = all cells in that ray direction
-    path_index = {lbl: i for i, lbl in enumerate(path)}
-
-    for i, lbl in enumerate(path[:-1]):  # skip 'P' (last)
+    for i, lbl in enumerate(path[:-1]):
         next_lbl = path[i + 1]
         r, c = label_to_pos[lbl]
         nr, nc = label_to_pos[next_lbl]
-
-        # Determine normalized direction (single step)
         dr = 0 if nr == r else (1 if nr > r else -1)
         dc = 0 if nc == c else (1 if nc > c else -1)
         arrow = DIR_TO_ARROW.get((dr, dc), '•')
-
         graph.nodes[lbl].arrow_direction = arrow
-
-        # Add ALL cells in this direction as edges (Signpost rule)
         ray_targets = all_nodes_in_direction(r, c, dr, dc, pos_to_label)
         for t in ray_targets:
             graph.add_edge(lbl, t)
 
-    # 4. Set 'P' as goal (no outgoing edges)
     graph.nodes['P'].arrow_direction = '★'
-
     graph.set_solution_path(path)
     return graph
 
 
 # ====================
-# SOLUTION COUNTER 
+# SOLUTION COUNTER
 # ====================
 
 def count_hamiltonian_solutions(graph, start='A', goal='P', cutoff=2):
@@ -234,17 +370,13 @@ class GameState:
         self.current_position = 'A'
         self.current_turn = 'Human'
         self.visit_count = 1
-
         self.human_correct_moves = 0
         self.human_illegal_moves = 0
         self.cpu_correct_moves = 0
         self.cpu_illegal_moves = 0
-
         self.cpu_illegal_history = set()
-
         self.graph.nodes['A'].visited = True
         self.graph.nodes['A'].visit_order = 1
-
         self.game_over = False
         self.winner = None
 
@@ -315,7 +447,7 @@ class GameState:
 
 
 # ====================
-# CPU PLAYER — Pure Backtracking DFS
+# CPU PLAYER
 # ====================
 
 class BacktrackingCPU:
@@ -331,7 +463,6 @@ class BacktrackingCPU:
     def backtrack(self, cur, visited_set, path):
         if cur == self.goal_label and len(visited_set) == len(self.all_labels):
             return list(path)
-
         for nxt in self.graph.get_neighbors(cur):
             if not self.is_legal(cur, nxt, visited_set):
                 continue
@@ -342,24 +473,20 @@ class BacktrackingCPU:
                 return result
             visited_set.remove(nxt)
             path.pop()
-
         return None
 
     def get_best_move(self):
         cur = self.game_state.current_position
         visited_set = {lbl for lbl, node in self.graph.nodes.items() if node.visited}
-
         result = self.backtrack(cur, visited_set, [cur])
         if result and len(result) > 1:
             return result[1]
-
         candidates = [
             n for n in self.graph.get_neighbors(cur)
             if self.is_legal(cur, n, visited_set) and (cur, n) not in self.game_state.cpu_illegal_history
         ]
         if candidates:
             return random.choice(candidates)
-
         candidates = [n for n in self.graph.get_neighbors(cur) if self.is_legal(cur, n, visited_set)]
         return random.choice(candidates) if candidates else None
 
@@ -395,6 +522,13 @@ class PuzzleGameGUI:
         self.timer_max = 15
         self.timer_id = None
 
+        # ── Sound ──────────────────────────────────────────────
+        self.sfx = SoundManager()
+        if not SOUND_AVAILABLE:
+            print("[SoundManager] pygame not found — sound disabled.\n"
+                  "  Install with:  pip install pygame numpy")
+        # ──────────────────────────────────────────────────────
+
         self._build_puzzle()
         self.create_gui()
         self.update_display()
@@ -424,6 +558,18 @@ class PuzzleGameGUI:
                  fg=self.C['text_primary'], bg=self.C['bg']).pack(side='left')
         tk.Label(header, text="  Puzzle  —  Arrow-Based Edges", font=('Georgia', 14, 'italic'),
                  fg=self.C['text_secondary'], bg=self.C['bg']).pack(side='left', pady=(12, 0))
+
+        # Mute toggle button
+        self.muted = False
+        self.mute_btn = tk.Button(
+            header, text="🔊  Sound ON", font=('Helvetica', 10),
+            bg=self.C['card'], fg=self.C['accent_green'],
+            activebackground=self.C['border'], activeforeground=self.C['text_primary'],
+            relief='flat', bd=0, padx=10, pady=4, cursor='hand2',
+            command=self.toggle_mute
+        )
+        self.mute_btn.pack(side='right', pady=(12, 0))
+
         tk.Frame(root_pad, bg=self.C['border'], height=1).pack(fill='x', pady=(0, 18))
 
         body = tk.Frame(root_pad, bg=self.C['bg'])
@@ -585,6 +731,21 @@ class PuzzleGameGUI:
 
         tk.Frame(score_card, bg=self.C['surface'], height=8).pack()
 
+    # ── Sound helpers ──────────────────────────────────────────
+    def play(self, name: str):
+        """Play a named sound unless muted."""
+        if not self.muted:
+            self.sfx.play(name)
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        if self.muted:
+            self.mute_btn.config(text="🔇  Sound OFF", fg=self.C['accent_red'])
+        else:
+            self.mute_btn.config(text="🔊  Sound ON",  fg=self.C['accent_green'])
+            self.play("tick")          # play a tiny confirmation beep
+    # ──────────────────────────────────────────────────────────
+
     def _hist(self, text, tag="move_ok"):
         self.history.config(state='normal')
         self.history.insert(tk.END, text + "\n", tag)
@@ -604,6 +765,14 @@ class PuzzleGameGUI:
             remaining = self.timer_max - self.timer_seconds
             color = self.C['accent_red'] if remaining <= 5 else self.C['text_primary']
             self.timer_label.config(text=f"{remaining}s", fg=color)
+
+            # ── Tick sounds ─────────────────────────────────────
+            if remaining <= 5:
+                self.play("tick_warn")   # urgent tick for last 5 s
+            else:
+                self.play("tick")        # subtle tick otherwise
+            # ────────────────────────────────────────────────────
+
             if self.timer_seconds >= self.timer_max:
                 self.on_timeout()
                 return
@@ -621,6 +790,7 @@ class PuzzleGameGUI:
 
     def on_timeout(self):
         self._hist("Human timed out", "move_err")
+        self.play("timeout")                           # ← timeout sound
         self.game_state.human_illegal_moves += 1
         self.game_state.switch_turn()
         self.reset_timer()
@@ -634,8 +804,10 @@ class PuzzleGameGUI:
         success, _ = self.game_state.make_move(label)
         if success:
             self._hist(f"Human  >  {label}", "move_ok")
+            self.play("correct")                       # ← correct move chime
         else:
             self._hist(f"Human  >  {label}  (invalid)", "move_err")
+            self.play("error")                         # ← error buzz
             self.flash_error(label)
 
         self.reset_timer()
@@ -653,6 +825,7 @@ class PuzzleGameGUI:
         move = self.cpu_player.get_best_move()
         if move is None:
             self._hist("CPU has no legal moves!", "move_err")
+            self.play("error")                         # ← CPU fail sound
             self.game_state.cpu_illegal_moves += 1
             self.game_state.switch_turn()
             self.reset_timer()
@@ -662,9 +835,11 @@ class PuzzleGameGUI:
         success, _ = self.game_state.make_move(move)
         if success:
             self._hist(f"CPU    >  {move}  [Backtracking DFS]", "move_ok")
+            self.play("cpu_move")                      # ← CPU move beep
             self.flash_cpu(move)
         else:
             self._hist(f"CPU    >  {move}  (invalid)", "move_err")
+            self.play("error")                         # ← error buzz
             self.flash_error(move)
 
         self.reset_timer()
@@ -724,7 +899,6 @@ class PuzzleGameGUI:
             text=turn,
             fg=self.C['accent_blue'] if turn == 'Human' else self.C['text_secondary']
         )
-
         node = self.graph.nodes[self.game_state.current_position]
         self.position_label.config(text=f"{self.game_state.current_position}  (step {node.visit_order})")
 
@@ -740,6 +914,14 @@ class PuzzleGameGUI:
             self.timer_id = None
 
         gs = self.game_state
+
+        # ── Play win / lose / draw fanfare ────────────────────
+        if gs.winner == 'Human':
+            self.play("win")
+        else:
+            self.play("lose")
+        # ──────────────────────────────────────────────────────
+
         msg = (f"Winner:  {gs.winner}\n\n"
                f"Human    Correct: {gs.human_correct_moves}   Errors: {gs.human_illegal_moves}\n"
                f"CPU      Correct: {gs.cpu_correct_moves}   Errors: {gs.cpu_illegal_moves}\n\n"
@@ -753,6 +935,7 @@ class PuzzleGameGUI:
             self.timer_id = None
 
         self._build_puzzle()
+        self.play("reset")                             # ← reset chime
 
         for label, node in self.graph.nodes.items():
             w = self.buttons[label]
@@ -775,7 +958,6 @@ class PuzzleGameGUI:
         self.cpu_errors_lbl.config(text="0")
 
         self.algo_label.config(text="Backtracking DFS")
-
         self.update_display()
         self.timer_seconds = 0
         self.start_timer()
