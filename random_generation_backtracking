@@ -2,11 +2,12 @@ import tkinter as tk
 from tkinter import messagebox
 import random
 
-# ---------- Arrow helpers (purely visual) ----------
+# ---------- Arrow helpers ----------
 DIR_TO_ARROW = {
     (-1,  0): '↑', (1,  0): '↓', (0, -1): '←', (0,  1): '→',
     (-1, -1): '↖', (-1, 1): '↗', (1, -1): '↙', (1,  1): '↘'
 }
+ARROW_TO_DIR = {v: k for k, v in DIR_TO_ARROW.items()}
 
 def arrow_from_to(node_a, node_b):
     dr = node_b.row - node_a.row
@@ -16,137 +17,6 @@ def arrow_from_to(node_a, node_b):
     return DIR_TO_ARROW.get((dr, dc), '•')
 
 
-# ---------- Solution counter (uniqueness check) ----------
-def count_hamiltonian_solutions(graph, start='A', goal='P', cutoff=2):
-    """
-    Counts number of Hamiltonian paths from start to goal
-    that visit ALL nodes exactly once.
-    Stops early at 'cutoff' (default 2).
-    """
-    all_nodes = set(graph.nodes.keys())
-    neighbors = graph.get_neighbors
-
-    visited = set([start])
-
-    def dfs(cur):
-        # reached goal
-        if cur == goal:
-            return 1 if visited == all_nodes else 0
-
-        total = 0
-        for nxt in neighbors(cur):
-            if nxt in visited:
-                continue
-            visited.add(nxt)
-            total += dfs(nxt)
-            visited.remove(nxt)
-
-            if total >= cutoff:
-                return cutoff
-        return total
-
-    return dfs(start)
-
-
-# ---------- Random Hamiltonian path generator inside a base graph ----------
-def random_hamiltonian_path(base_graph, start='A', goal='P'):
-    """
-    Shuffled backtracking DFS to get ONE random Hamiltonian path from start to goal.
-    Returns list like ['A', ..., 'P'] or None.
-    """
-    all_nodes = set(base_graph.nodes.keys())
-    visited = set([start])
-    path = [start]
-
-    def backtrack(cur):
-        if cur == goal and visited == all_nodes:
-            return True
-
-        nbrs = list(base_graph.get_neighbors(cur))
-        random.shuffle(nbrs)
-
-        for nxt in nbrs:
-            if nxt in visited:
-                continue
-            visited.add(nxt)
-            path.append(nxt)
-            if backtrack(nxt):
-                return True
-            path.pop()
-            visited.remove(nxt)
-        return False
-
-    ok = backtrack(start)
-    return path if ok else None
-
-
-# ---------- Unique puzzle generator (Idea #1) ----------
-def generate_unique_puzzle_from_base(base_graph, decoy_target=14, max_tries=5000):
-    """
-    Generates a new puzzle graph:
-    - choose random Hamiltonian solution path in base_graph
-    - start edges = only the path edges (unique)
-    - add decoy edges while keeping uniqueness (solution count == 1)
-
-    decoy_target: how many extra edges you *try* to add beyond the path edges
-    max_tries: safety loop cap
-    """
-    # 1) get random solution path
-    sol = random_hamiltonian_path(base_graph, start='A', goal='P')
-    if sol is None:
-        raise RuntimeError("No Hamiltonian path exists in base graph. Add more base edges.")
-
-    # 2) build puzzle graph with same nodes but fresh adjacency
-    puzzle = PuzzleGraph()
-    for lbl, n in base_graph.nodes.items():
-        puzzle.add_node(lbl, n.row, n.col, n.arrow_direction)
-
-    # 3) add ONLY the solution edges first
-    solution_edges = set()
-    for i in range(len(sol) - 1):
-        u, v = sol[i], sol[i + 1]
-        puzzle.add_edge(u, v)
-        solution_edges.add((u, v))
-
-    # 4) candidate decoys = base edges not in solution
-    candidates = []
-    for u, outs in base_graph.adjacency_list.items():
-        for v in outs:
-            if (u, v) not in solution_edges:
-                candidates.append((u, v))
-
-    random.shuffle(candidates)
-
-    # 5) add decoys while preserving uniqueness
-    added = 0
-    tries = 0
-    idx = 0
-
-    while added < decoy_target and tries < max_tries and idx < len(candidates):
-        tries += 1
-        u, v = candidates[idx]
-        idx += 1
-
-        # temporarily add
-        puzzle.adjacency_list[u].append(v)
-
-        # check uniqueness
-        cnt = count_hamiltonian_solutions(puzzle, start='A', goal='P', cutoff=2)
-        if cnt == 1:
-            added += 1
-        else:
-            # revert
-            puzzle.adjacency_list[u].pop()
-
-    # 6) set arrows to point along the TRUE solution (visual hint)
-    for i in range(len(sol) - 1):
-        a = puzzle.nodes[sol[i]]
-        b = puzzle.nodes[sol[i + 1]]
-        a.arrow_direction = arrow_from_to(a, b)
-    puzzle.nodes['P'].arrow_direction = '★'
-
-    puzzle.set_solution_path(sol)
-    return puzzle
 # ====================
 # GRAPH IMPLEMENTATION
 # ====================
@@ -173,7 +43,8 @@ class PuzzleGraph:
 
     def add_edge(self, from_label, to_label):
         if from_label in self.adjacency_list:
-            self.adjacency_list[from_label].append(to_label)
+            if to_label not in self.adjacency_list[from_label]:
+                self.adjacency_list[from_label].append(to_label)
 
     def get_neighbors(self, label):
         return self.adjacency_list.get(label, [])
@@ -183,50 +54,174 @@ class PuzzleGraph:
 
 
 # ====================
-# RANDOM SOLUTION PATH GENERATOR
-# Shuffled Backtracking DFS
-# Finds a random Hamiltonian path from A to P
+# PUZZLE GENERATOR
+# Core Signpost rule:
+#   Each node has ONE arrow direction.
+#   Its edges = ALL grid cells reachable by moving in that direction
+#   (any distance along that ray, like a bishop/rook in chess).
+#
+# Generation process:
+#   1. Find a random Hamiltonian path A→P on the full king-move graph
+#   2. Assign each node's arrow = direction toward its NEXT node in the path
+#   3. Build edges = every node reachable along that arrow ray
+#      (this automatically includes the correct next node, plus decoys)
+#   4. 'P' gets the star ★ and no outgoing edges
 # ====================
 
-def generate_random_solution(graph):
+GRID_LABELS = [
+    ['A','B','C','D'],
+    ['E','F','G','H'],
+    ['I','J','K','L'],
+    ['M','N','O','P'],
+]
+ROWS, COLS = 4, 4
+
+
+def build_label_grid():
+    """Returns dict: label -> (row, col) and (row,col) -> label"""
+    label_to_pos = {}
+    pos_to_label = {}
+    for r in range(ROWS):
+        for c in range(COLS):
+            lbl = GRID_LABELS[r][c]
+            label_to_pos[lbl] = (r, c)
+            pos_to_label[(r, c)] = lbl
+    return label_to_pos, pos_to_label
+
+
+def all_nodes_in_direction(row, col, dr, dc, pos_to_label):
     """
-    Uses shuffled backtracking DFS to find a random valid path that visits ALL nodes exactly
-    once, starting at A and ending at P.
+    Returns all grid labels reachable by stepping (dr, dc) repeatedly from (row, col).
+    This implements the Signpost ray rule: arrow points to ALL cells in that direction.
     """
-    all_labels = set(graph.nodes.keys())
-    goal = 'P'
+    results = []
+    r, c = row + dr, col + dc
+    while 0 <= r < ROWS and 0 <= c < COLS:
+        results.append(pos_to_label[(r, c)])
+        r += dr
+        c += dc
+    return results
 
-    def backtrack(cur, visited, path):
-        if len(visited) == len(all_labels) and cur == goal:
-            return list(path)
 
-        neighbors = list(graph.get_neighbors(cur))
-        random.shuffle(neighbors)
+def random_hamiltonian_path_king(label_to_pos, pos_to_label, start='A', goal='P'):
+    """
+    Finds a random Hamiltonian path from start to goal using king moves (8-directional,
+    any distance — i.e. the path only moves one step at a time but considers all 8 neighbors).
+    We use single-step king moves for the PATH (so each step moves to an adjacent cell),
+    which ensures the arrow direction is well-defined.
+    """
+    all_labels = set(label_to_pos.keys())
+    visited = {start}
+    path = [start]
 
-        for nxt in neighbors:
+    def neighbors_king(lbl):
+        r, c = label_to_pos[lbl]
+        nbrs = []
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr == 0 and dc == 0:
+                    continue
+                rr, cc = r + dr, c + dc
+                if (rr, cc) in pos_to_label:
+                    nbrs.append(pos_to_label[(rr, cc)])
+        random.shuffle(nbrs)
+        return nbrs
+
+    def backtrack(cur):
+        if visited == all_labels and cur == goal:
+            return True
+        for nxt in neighbors_king(cur):
             if nxt in visited:
                 continue
-
             visited.add(nxt)
             path.append(nxt)
-
-            result = backtrack(nxt, visited, path)
-            if result is not None:
-                return result
-
-            visited.remove(nxt)
+            if backtrack(nxt):
+                return True
             path.pop()
+            visited.remove(nxt)
+        return False
 
-        return None
+    if backtrack(start):
+        return path
+    return None
 
-    visited = {'A'}
-    path = ['A']
-    result = backtrack('A', visited, path)
 
-    # Fallback if no Hamiltonian path found (shouldn't happen often)
-    if result is None:
-        return ['A','K','F','H','G','E','B','L','D','C','I','J','M','N','O','P']
-    return result
+def generate_signpost_puzzle():
+    """
+    Generates a valid Signpost puzzle:
+    - Random Hamiltonian path A→P
+    - Each node's arrow = direction to next node in path
+    - Each node's edges = ALL cells along that arrow ray (correct next + decoys)
+    - 'P' has no outgoing edges (★)
+    """
+    label_to_pos, pos_to_label = build_label_grid()
+
+    # 1. Find random Hamiltonian path
+    path = None
+    for _ in range(200):  # retry if backtracking fails
+        path = random_hamiltonian_path_king(label_to_pos, pos_to_label)
+        if path is not None:
+            break
+
+    if path is None:
+        raise RuntimeError("Could not find Hamiltonian path after many tries.")
+
+    # 2. Build puzzle graph
+    graph = PuzzleGraph()
+    for lbl, (r, c) in label_to_pos.items():
+        graph.add_node(lbl, r, c, '•')  # arrow set below
+
+    # 3. For each node (except P), set arrow = direction to next in path
+    #    and add edges = all cells in that ray direction
+    path_index = {lbl: i for i, lbl in enumerate(path)}
+
+    for i, lbl in enumerate(path[:-1]):  # skip 'P' (last)
+        next_lbl = path[i + 1]
+        r, c = label_to_pos[lbl]
+        nr, nc = label_to_pos[next_lbl]
+
+        # Determine normalized direction (single step)
+        dr = 0 if nr == r else (1 if nr > r else -1)
+        dc = 0 if nc == c else (1 if nc > c else -1)
+        arrow = DIR_TO_ARROW.get((dr, dc), '•')
+
+        graph.nodes[lbl].arrow_direction = arrow
+
+        # Add ALL cells in this direction as edges (Signpost rule)
+        ray_targets = all_nodes_in_direction(r, c, dr, dc, pos_to_label)
+        for t in ray_targets:
+            graph.add_edge(lbl, t)
+
+    # 4. Set 'P' as goal (no outgoing edges)
+    graph.nodes['P'].arrow_direction = '★'
+
+    graph.set_solution_path(path)
+    return graph
+
+
+# ====================
+# SOLUTION COUNTER 
+# ====================
+
+def count_hamiltonian_solutions(graph, start='A', goal='P', cutoff=2):
+    all_nodes = set(graph.nodes.keys())
+    visited = {start}
+
+    def dfs(cur):
+        if cur == goal:
+            return 1 if visited == all_nodes else 0
+        total = 0
+        for nxt in graph.get_neighbors(cur):
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            total += dfs(nxt)
+            visited.remove(nxt)
+            if total >= cutoff:
+                return cutoff
+        return total
+
+    return dfs(start)
 
 
 # ====================
@@ -340,14 +335,11 @@ class BacktrackingCPU:
         for nxt in self.graph.get_neighbors(cur):
             if not self.is_legal(cur, nxt, visited_set):
                 continue
-
             visited_set.add(nxt)
             path.append(nxt)
-
             result = self.backtrack(nxt, visited_set, path)
             if result is not None:
                 return result
-
             visited_set.remove(nxt)
             path.pop()
 
@@ -361,7 +353,6 @@ class BacktrackingCPU:
         if result and len(result) > 1:
             return result[1]
 
-        # Fallback: any legal move not previously failed
         candidates = [
             n for n in self.graph.get_neighbors(cur)
             if self.is_legal(cur, n, visited_set) and (cur, n) not in self.game_state.cpu_illegal_history
@@ -369,7 +360,6 @@ class BacktrackingCPU:
         if candidates:
             return random.choice(candidates)
 
-        # Last fallback: any legal move
         candidates = [n for n in self.graph.get_neighbors(cur) if self.is_legal(cur, n, visited_set)]
         return random.choice(candidates) if candidates else None
 
@@ -411,40 +401,9 @@ class PuzzleGameGUI:
         self.start_timer()
 
     def _build_puzzle(self):
-        base_graph = self._create_graph() 
-        self.graph = generate_unique_puzzle_from_base(
-            base_graph,
-            decoy_target=14  # increase for harder, decrease for easier
-        )
-
+        self.graph = generate_signpost_puzzle()
         self.game_state = GameState(self.graph)
         self.cpu_player = BacktrackingCPU(self.graph, self.game_state)
-    def _create_graph(self):
-        graph = PuzzleGraph()
-
-        grid = [
-            ('A',0,0,'•'),('B',0,1,'•'),('C',0,2,'•'),('D',0,3,'•'),
-            ('E',1,0,'•'),('F',1,1,'•'),('G',1,2,'•'),('H',1,3,'•'),
-            ('I',2,0,'•'),('J',2,1,'•'),('K',2,2,'•'),('L',2,3,'•'),
-            ('M',3,0,'•'),('N',3,1,'•'),('O',3,2,'•'),('P',3,3,'★'),
-        ]
-        for l, r, c, a in grid:
-            graph.add_node(l, r, c, a)
-
-        # Base edges: 8-neighbor moves (king moves)
-        labels_by_pos = {(n.row, n.col): lbl for lbl, n in graph.nodes.items()}
-        for (r, c), u in labels_by_pos.items():
-            for dr in (-1, 0, 1):
-                for dc in (-1, 0, 1):
-                    if dr == 0 and dc == 0:
-                        continue
-                    rr, cc = r + dr, c + dc
-                    if (rr, cc) in labels_by_pos:
-                        v = labels_by_pos[(rr, cc)]
-                        graph.add_edge(u, v)
-
-        return graph
-
 
     def _label(self, parent, text, font, fg=None, bg=None, anchor='center', **kw):
         return tk.Label(
@@ -463,7 +422,7 @@ class PuzzleGameGUI:
         header.pack(fill='x', pady=(0, 20))
         tk.Label(header, text="SIGNPOST", font=('Georgia', 30, 'bold'),
                  fg=self.C['text_primary'], bg=self.C['bg']).pack(side='left')
-        tk.Label(header, text="  Puzzle  —  Random Solution", font=('Georgia', 14, 'italic'),
+        tk.Label(header, text="  Puzzle  —  Arrow-Based Edges", font=('Georgia', 14, 'italic'),
                  fg=self.C['text_secondary'], bg=self.C['bg']).pack(side='left', pady=(12, 0))
         tk.Frame(root_pad, bg=self.C['border'], height=1).pack(fill='x', pady=(0, 18))
 
@@ -758,7 +717,7 @@ class PuzzleGameGUI:
 
             w['frame'].config(bg=bg, highlightbackground=border, highlightthickness=bw)
             w['letter'].config(bg=bg, fg=fg_l)
-            w['arrow'].config(bg=bg, fg=fg_a)
+            w['arrow'].config(bg=bg, fg=fg_a, text=node.arrow_direction)
 
         turn = self.game_state.current_turn
         self.turn_label.config(
