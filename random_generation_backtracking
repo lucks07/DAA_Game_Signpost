@@ -126,7 +126,7 @@ class GameState:
         try:
             idx = self.graph.solution_path.index(self.current_position)
             return self.graph.solution_path[idx + 1] == target
-        except:
+        except (ValueError, IndexError):
             return False
 
     def make_move(self, target):
