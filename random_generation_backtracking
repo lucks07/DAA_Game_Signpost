@@ -236,7 +236,7 @@ class BacktrackingCPU:
 
         candidates = [n for n in self.graph.get_neighbors(cur)
                       if self.is_legal(cur, n, visited_set)]
-        return random.choice(candidates) if candidates else random.choice(list(self.all_labels))
+        return random.choice(candidates) if candidates else None
 
 
 # ====================
@@ -542,28 +542,15 @@ class PuzzleGameGUI:
         if self.game_state.game_over:
             self.root.after(900, self.show_winner)
 
-    def flash_error(self, label):
-        seq = ['#3D2020', '#4A2020', '#3D2020', '#4A2020', self.C['card']]
+   def flash_cell(self, label, colors):
         def step(i):
-            if i < len(seq):
-                w = self.buttons[label]
-                for k in ('frame', 'letter', 'arrow'):
-                    w[k].config(bg=seq[i])
-                self.root.after(120, lambda: step(i + 1))
+            if i < len(colors):
+                  w = self.buttons[label]
+                  for k in ('frame', 'letter', 'arrow'):
+                           w[k].config(bg=colors[i])
+                  self.root.after(150, lambda: step(i+1))
             else:
-                self.update_display()
-        step(0)
-
-    def flash_cpu(self, label):
-        seq = ['#2B3A52', self.C['card'], '#2B3A52', self.C['card']]
-        def step(i):
-            if i < len(seq):
-                w = self.buttons[label]
-                for k in ('frame', 'letter', 'arrow'):
-                    w[k].config(bg=seq[i])
-                self.root.after(200, lambda: step(i + 1))
-            else:
-                self.update_display()
+                  self.update_display()
         step(0)
 
     def update_display(self):
