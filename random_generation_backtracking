@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
 import random
-
 import math
 import struct
 import array as _array
@@ -18,13 +17,9 @@ except Exception:
 def _make_sound(samples: list, volume: float = 0.6):
     if not SOUND_AVAILABLE:
         return None
-
     peak = volume * 32767
     raw = _array.array('h', [max(-32768, min(32767, int(s * peak))) for s in samples])
-
-    sound = pygame.mixer.Sound(buffer=raw)
-
-    return sound
+    return pygame.mixer.Sound(buffer=raw.tobytes())
 
 
 def _env(i: int, n: int, a_n: int, d_n: int) -> float:
@@ -35,50 +30,42 @@ def _env(i: int, n: int, a_n: int, d_n: int) -> float:
     return 1.0
 
 
-def _sine_samples(freq: float, duration: float, sr: int = 44100,
-                  attack: float = 0.01, decay: float = 0.05) -> list:
+def _sine_samples(freq, duration, sr=44100, attack=0.01, decay=0.05):
     n = int(sr * duration)
     a_n, d_n = int(attack * sr), int(decay * sr)
-    return [math.sin(2 * math.pi * freq * i / sr) * _env(i, n, a_n, d_n)
-            for i in range(n)]
+    return [math.sin(2 * math.pi * freq * i / sr) * _env(i, n, a_n, d_n) for i in range(n)]
 
 
-def _square_samples(freq: float, duration: float, sr: int = 44100,
-                    attack: float = 0.005, decay: float = 0.04,
-                    duty: float = 0.5, harmonics: int = 8) -> list:
-
+def _square_samples(freq, duration, sr=44100, attack=0.005, decay=0.04, duty=0.5, harmonics=8):
     n = int(sr * duration)
     a_n, d_n = int(attack * sr), int(decay * sr)
     out = []
     for i in range(n):
         t = i / sr
-        val = 0.0
-        for k in range(1, harmonics * 2, 2):          # odd harmonics only
-            val += math.sin(2 * math.pi * k * freq * t - math.pi * duty * k) / k
-        val *= (4 / math.pi)                           # normalise
+        val = sum(math.sin(2 * math.pi * k * freq * t - math.pi * duty * k) / k
+                  for k in range(1, harmonics * 2, 2))
+        val *= (4 / math.pi)
         out.append(val * _env(i, n, a_n, d_n))
     return out
 
 
-def _triangle_samples(freq: float, duration: float, sr: int = 44100,
-                      attack: float = 0.005, decay: float = 0.06) -> list:
-    """Triangle wave — warmer than square, punchier than sine. Great for bass notes."""
+def _triangle_samples(freq, duration, sr=44100, attack=0.005, decay=0.06):
     n = int(sr * duration)
     a_n, d_n = int(attack * sr), int(decay * sr)
-    out = []
     period = sr / freq
+    out = []
     for i in range(n):
-        phase = (i % period) / period          # 0..1
-        val = 4 * abs(phase - 0.5) - 1.0      # triangle shape
+        phase = (i % period) / period
+        val = 4 * abs(phase - 0.5) - 1.0
         out.append(val * _env(i, n, a_n, d_n))
     return out
 
 
-def _silence(duration: float, sr: int = 44100) -> list:
+def _silence(duration, sr=44100):
     return [0.0] * int(sr * duration)
 
 
-def _concat(*parts) -> list:
+def _concat(*parts):
     result = []
     for p in parts:
         result.extend(p)
@@ -86,42 +73,31 @@ def _concat(*parts) -> list:
 
 
 class SoundManager:
-    """Pre-generates and caches all game sounds — zero external files needed."""
-
     def __init__(self):
-        self._sounds: dict = {}
+        self._sounds = {}
         if not SOUND_AVAILABLE:
             return
-        self._build_sounds()
+        try:
+            self._build_sounds()
+        except Exception as e:
+            print("Error building sounds:", e)
 
     def _build_sounds(self):
         sr = 44100
-
-        # ── Correct human move: crispy 8-bit two-note coin pickup  ✔
         self._sounds["correct"] = _make_sound(_concat(
             _square_samples(659.25, 0.06, sr, attack=0.003, decay=0.02, harmonics=6),
             _square_samples(987.77, 0.10, sr, attack=0.003, decay=0.07, harmonics=6),
         ), 0.52)
-
-        # ── CPU move: short low blip
         self._sounds["cpu_move"] = _make_sound(
             _square_samples(330, 0.07, sr, attack=0.003, decay=0.04, harmonics=4), 0.28)
-
-        # ── Invalid/error: harsh descending buzz
         self._sounds["error"] = _make_sound(_concat(
             _square_samples(220, 0.06, sr, attack=0.003, decay=0.02, harmonics=10),
             _square_samples(164.81, 0.14, sr, attack=0.003, decay=0.10, harmonics=10),
         ), 0.55)
-
-        # ── Timer tick: tiny 8-bit click
         self._sounds["tick"] = _make_sound(
             _square_samples(880, 0.025, sr, attack=0.002, decay=0.015, harmonics=3), 0.20)
-
-        # ── Timer warning: urgent high blip
         self._sounds["tick_warn"] = _make_sound(
             _square_samples(1320, 0.035, sr, attack=0.002, decay=0.02, harmonics=3), 0.40)
-
-        # ── Timeout: classic "fail" three-note drop
         self._sounds["timeout"] = _make_sound(_concat(
             _square_samples(392, 0.10, sr, attack=0.005, decay=0.04, harmonics=5),
             _silence(0.02, sr),
@@ -129,82 +105,101 @@ class SoundManager:
             _silence(0.02, sr),
             _square_samples(233.08, 0.22, sr, attack=0.005, decay=0.16, harmonics=5),
         ), 0.55)
-
-        # ── Human wins: Mario Course Clear — full chiptune fanfare 🎉
-        #   Arpeggio burst → staccato phrase → triumphant held finish
         self._sounds["win"] = _make_sound(_concat(
-            # rapid arpeggio burst (G5-C6-E6)
-            _square_samples(783.99,  0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _square_samples(783.99, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
             _square_samples(1046.50, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
             _square_samples(1318.51, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
             _silence(0.04, sr),
-            # staccato melody phrase
-            _square_samples(783.99,  0.09, sr, attack=0.004, decay=0.03, harmonics=7),  # G5
+            _square_samples(783.99, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),
             _silence(0.025, sr),
-            _square_samples(1046.50, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),  # C6
+            _square_samples(1046.50, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),
             _silence(0.025, sr),
-            _square_samples(1318.51, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),  # E6
+            _square_samples(1318.51, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),
             _silence(0.025, sr),
-            # held high note then step down and soar back up
-            _square_samples(1567.98, 0.18, sr, attack=0.004, decay=0.05, harmonics=7),  # G6
+            _square_samples(1567.98, 0.18, sr, attack=0.004, decay=0.05, harmonics=7),
             _silence(0.03, sr),
-            _square_samples(1318.51, 0.07, sr, attack=0.003, decay=0.02, harmonics=7),  # E6
+            _square_samples(1318.51, 0.07, sr, attack=0.003, decay=0.02, harmonics=7),
             _silence(0.02, sr),
-            _square_samples(1567.98, 0.45, sr, attack=0.005, decay=0.35, harmonics=7),  # G6 long
+            _square_samples(1567.98, 0.45, sr, attack=0.005, decay=0.35, harmonics=7),
         ), 0.50)
-
-        # ── CPU wins / draw: Mario Game Over — gloomy chiptune dirge 💀
-        #   Descending chromatic sadness with triangle bass undertone
         self._sounds["lose"] = _make_sound(_concat(
-            _square_samples(493.88, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),   # B4
+            _square_samples(493.88, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),
             _silence(0.025, sr),
-            _square_samples(369.99, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),   # F#4
+            _square_samples(369.99, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),
             _silence(0.025, sr),
-            _triangle_samples(311.13, 0.13, sr, attack=0.008, decay=0.05),              # Eb4 (warmer)
+            _triangle_samples(311.13, 0.13, sr, attack=0.008, decay=0.05),
             _silence(0.015, sr),
-            _square_samples(329.63, 0.08, sr, attack=0.005, decay=0.03, harmonics=5),   # E4
+            _square_samples(329.63, 0.08, sr, attack=0.005, decay=0.03, harmonics=5),
             _silence(0.015, sr),
-            _triangle_samples(311.13, 0.10, sr, attack=0.005, decay=0.04),              # Eb4
+            _triangle_samples(311.13, 0.10, sr, attack=0.005, decay=0.04),
             _silence(0.03, sr),
-            _triangle_samples(246.94, 0.60, sr, attack=0.010, decay=0.50),              # B3 long fade
+            _triangle_samples(246.94, 0.60, sr, attack=0.010, decay=0.50),
         ), 0.55)
-
-        # ── Game reset: cheerful 8-bit upward ping
         self._sounds["reset"] = _make_sound(_concat(
             _square_samples(440, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
             _square_samples(554.37, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
-            _square_samples(659.25, 0.09,  sr, attack=0.003, decay=0.06, harmonics=5),
+            _square_samples(659.25, 0.09, sr, attack=0.003, decay=0.06, harmonics=5),
         ), 0.42)
 
     def play(self, name: str):
         if not SOUND_AVAILABLE:
             return
         snd = self._sounds.get(name)
-        if snd:
-            try:
-                snd.play()
-            except Exception:
-                pass
+        if snd is None:
+            return
+        try:
+            snd.play()
+        except Exception as e:
+            print("Sound playback error:", e)
 
 
-# ---------- Arrow helpers ----------
 DIR_TO_ARROW = {
-    (-1,  0): '↑', (1,  0): '↓', (0, -1): '←', (0,  1): '→',
-    (-1, -1): '↖', (-1, 1): '↗', (1, -1): '↙', (1,  1): '↘'
+    (-1, 0): '↑', (1, 0): '↓', (0, -1): '←', (0, 1): '→',
+    (-1, -1): '↖', (-1, 1): '↗', (1, -1): '↙', (1, 1): '↘'
 }
-ARROW_TO_DIR = {v: k for k, v in DIR_TO_ARROW.items()}
 
-def arrow_from_to(node_a, node_b):
-    dr = node_b.row - node_a.row
-    dc = node_b.col - node_a.col
-    dr = 0 if dr == 0 else (1 if dr > 0 else -1)
-    dc = 0 if dc == 0 else (1 if dc > 0 else -1)
-    return DIR_TO_ARROW.get((dr, dc), '•')
+GRID_LABELS = [
+    ['A', 'B', 'C', 'D'],
+    ['E', 'F', 'G', 'H'],
+    ['I', 'J', 'K', 'L'],
+    ['M', 'N', 'O', 'P'],
+]
+ROWS, COLS = 4, 4
 
+DIFFICULTY_CONFIG = {
+    'easy':   {'mistake_pct': 75, 'label': 'EASY',   'desc': '75% CPU blunder rate'},
+    'medium': {'mistake_pct': 50, 'label': 'MEDIUM',  'desc': '50% CPU blunder rate'},
+    'hard':   {'mistake_pct': 20, 'label': 'HARD',    'desc': '20% CPU blunder rate'},
+}
 
-# ====================
-# GRAPH IMPLEMENTATION
-# ====================
+FUNNY_QUOTES = [
+    "\"The arrows are LYING. Or are they? Yes. No. Maybe.\"\n— A confused pilgrim",
+    "\"I followed every arrow perfectly and still got lost.\"\n— Someone who definitely did NOT",
+    "\"It's just 16 squares. How hard can it be?\"\n— Famous last words",
+    "\"The CPU has read Sun Tzu's Art of War.\nYou have not.\"\n— The Game",
+    "\"A-to-P: easy. Unless you're you.\"\n— Overconfident Narrator",
+]
+
+DIFFICULTY_RANGES = {
+    'easy':   (60, 85),
+    'medium': (35, 60),
+    'hard':   (10, 30),
+}
+
+DIFFICULTY_COLORS = {
+    'easy':   '#4CAF82',
+    'medium': '#E8A838',
+    'hard':   '#E05C5C',
+}
+
+# Hover theme per card: (card_bg, border_color)
+# Each level gets its own tinted dark background + its accent as the border
+CARD_HOVER_THEME = {
+    'easy':   {'bg': '#163D28', 'border': '#4CAF82'},   # deep forest green
+    'medium': {'bg': '#3D2D0A', 'border': '#E8A838'},   # deep amber
+    'hard':   {'bg': '#3D1414', 'border': '#E05C5C'},   # deep crimson
+}
+
 
 class GraphNode:
     def __init__(self, label, row, col, arrow_direction):
@@ -236,19 +231,6 @@ class PuzzleGraph:
 
     def set_solution_path(self, path):
         self.solution_path = path
-
-
-# ====================
-# PUZZLE GENERATOR
-# ====================
-
-GRID_LABELS = [
-    ['A','B','C','D'],
-    ['E','F','G','H'],
-    ['I','J','K','L'],
-    ['M','N','O','P'],
-]
-ROWS, COLS = 4, 4
 
 
 def build_label_grid():
@@ -316,7 +298,6 @@ def generate_signpost_puzzle():
         path = random_hamiltonian_path_king(label_to_pos, pos_to_label)
         if path is not None:
             break
-
     if path is None:
         raise RuntimeError("Could not find Hamiltonian path after many tries.")
 
@@ -340,35 +321,6 @@ def generate_signpost_puzzle():
     graph.set_solution_path(path)
     return graph
 
-
-# ====================
-# SOLUTION COUNTER
-# ====================
-
-def count_hamiltonian_solutions(graph, start='A', goal='P', cutoff=2):
-    all_nodes = set(graph.nodes.keys())
-    visited = {start}
-
-    def dfs(cur):
-        if cur == goal:
-            return 1 if visited == all_nodes else 0
-        total = 0
-        for nxt in graph.get_neighbors(cur):
-            if nxt in visited:
-                continue
-            visited.add(nxt)
-            total += dfs(nxt)
-            visited.remove(nxt)
-            if total >= cutoff:
-                return cutoff
-        return total
-
-    return dfs(start)
-
-
-# ====================
-# GAME LOGIC
-# ====================
 
 class GameState:
     def __init__(self, graph):
@@ -405,10 +357,8 @@ class GameState:
     def make_move(self, target):
         if self.game_over:
             return False, False
-
         if target is None or target not in self.graph.nodes:
-            legal = False
-            correct = False
+            legal = correct = False
         else:
             legal = self.is_legal_move(target)
             correct = self.is_correct_move(target)
@@ -452,33 +402,15 @@ class GameState:
             self.winner = 'Draw'
 
 
-# ====================
-# CPU PLAYER
-# ====================
-
 class BacktrackingCPU:
-    """
-    THE BUG THAT CAUSED 'CPU has no legal moves' FOREVER:
-      backtrack() mutated visited_set in-place and when it found a path it
-      returned immediately without removing the nodes it had added.
-      So after backtrack() returned, visited_set contained ALL nodes →
-      legal_moves was always empty → get_best_move returned None every time.
-
-    THE FIX:
-      Pass a copy of visited_set into backtrack() so the caller's set is
-      never touched. Then mistakes are implemented cleanly: if the current
-      node has >1 legal neighbour we occasionally pick a wrong one.
-    """
-    MISTAKE_CHANCE = 0.55   # 55 % chance CPU picks a wrong neighbour (when one exists)
-
-    def __init__(self, graph, game_state):
-        self.graph      = graph
+    def __init__(self, graph, game_state, mistake_chance: float = 0.55):
+        self.graph = graph
         self.game_state = game_state
         self.goal_label = 'P'
         self.all_labels = set(self.graph.nodes.keys())
+        self.mistake_chance = mistake_chance
 
     def backtrack(self, cur, visited_copy, path):
-        """Runs on a COPY of visited_set — never mutates the caller's set."""
         if cur == self.goal_label and len(visited_copy) == len(self.all_labels):
             return list(path)
         for nxt in self.graph.get_neighbors(cur):
@@ -494,70 +426,440 @@ class BacktrackingCPU:
         return None
 
     def get_best_move(self):
-        cur         = self.game_state.current_position
-        # Original visited set — never passed directly into backtrack
+        cur = self.game_state.current_position
         visited_set = {lbl for lbl, node in self.graph.nodes.items() if node.visited}
-
-        # Legal neighbours = arrow-reachable AND not yet visited
         legal = [n for n in self.graph.get_neighbors(cur) if n not in visited_set]
 
         if not legal:
-            return None     # genuine dead-end (shouldn't happen in a valid puzzle)
+            return None
 
-        # Find the correct move — pass a COPY so visited_set stays clean
         correct = None
-        result  = self.backtrack(cur, visited_set | {cur}, [cur])
+        result = self.backtrack(cur, visited_set | {cur}, [cur])
         if result and len(result) > 1:
             correct = result[1]
 
-        # Wrong options = legal neighbours that are NOT the correct move
         wrong = [n for n in legal if n != correct]
 
-        # Only blunder when a genuinely wrong option exists
-        # (no fake errors on forced single-neighbour moves)
-        if wrong and correct and random.random() < self.MISTAKE_CHANCE:
-            return random.choice(wrong)     # deliberate wrong pick → counted as error
+        if wrong and correct and random.random() < self.mistake_chance:
+            return random.choice(wrong)
 
         return correct if correct else random.choice(legal)
 
 
-# ====================
-# GUI
-# ====================
+# ═══════════════════════════════════════════════════════════════
+#   SPLASH SCREEN
+# ═══════════════════════════════════════════════════════════════
+
+class SplashScreen:
+    C = {
+        'bg': '#0D1117', 'surface': '#161B22', 'gold': '#F0C040',
+        'amber': '#E8A838', 'green': '#4CAF82', 'blue': '#5B9CF6',
+        'red': '#E05C5C', 'dim': '#545B6E', 'text': '#EAEDF3',
+        'text2': '#8A90A0', 'border': '#30363D',
+    }
+
+    def __init__(self, root, on_start_callback):
+        self.root = root
+        self.on_start = on_start_callback
+        self.frame = tk.Frame(root, bg=self.C['bg'])
+        self.frame.pack(fill='both', expand=True)
+        self.canvas = tk.Canvas(self.frame, bg=self.C['bg'], highlightthickness=0)
+        self.canvas.pack(fill='both', expand=True)
+        self.canvas.bind('<Configure>', self._on_resize)
+        self._draw_after_id = None
+
+    def _on_resize(self, event):
+        if self._draw_after_id:
+            self.root.after_cancel(self._draw_after_id)
+        self._draw_after_id = self.root.after(60, self._draw_all)
+
+    def _draw_all(self):
+        c = self.canvas
+        c.delete('all')
+        W = c.winfo_width()
+        H = c.winfo_height()
+        if W < 10 or H < 10:
+            return
+
+        sky_colors = ['#0D1117','#0F1520','#111928','#131E30',
+                      '#162038','#182340','#1A2648','#1C2950']
+        band_h = H * 0.55 / len(sky_colors)
+        for i, col in enumerate(sky_colors):
+            c.create_rectangle(0, i*band_h, W, (i+1)*band_h+1, fill=col, outline='')
+
+        random.seed(42)
+        for _ in range(120):
+            sx = random.randint(0, W)
+            sy = random.randint(0, int(H*0.45))
+            r = random.choice([1,1,1,2])
+            brightness = random.choice(['#FFFFFF','#AABBFF','#FFEEBB','#DDEEFF'])
+            c.create_oval(sx-r, sy-r, sx+r, sy+r, fill=brightness, outline='')
+
+        ground_y = H * 0.58
+        c.create_rectangle(0, ground_y, W, H, fill='#0A2A14', outline='')
+        for gx in range(0, W, 40):
+            c.create_line(gx, ground_y, gx+12, ground_y-18, fill='#1A5C30', width=2)
+            c.create_line(gx+6, ground_y, gx+18, ground_y-14, fill='#155228', width=1)
+
+        road_cx = W * 0.5
+        c.create_polygon(road_cx-30, ground_y, road_cx+30, ground_y,
+                         road_cx+90, H, road_cx-90, H, fill='#1C2226', outline='')
+        for dy in range(int(ground_y)+20, H, 40):
+            c.create_rectangle(road_cx-4, dy, road_cx+4, dy+20, fill='#E8A838', outline='')
+
+        pole_x = W * 0.38
+        pole_top = H * 0.12
+        pole_bot = ground_y + 4
+        c.create_rectangle(pole_x-7, pole_top, pole_x+7, pole_bot,
+                            fill='#5C4020', outline='#3A2810', width=2)
+
+        signs = [
+            ('A  →  B  →  C', self.C['blue'], H*0.15, 180),
+            ('FOLLOW THE ↗ ARROWS', self.C['gold'], H*0.26, 200),
+            ('↙ YOU ARE HERE ↘', self.C['green'], H*0.37, 190),
+            ('★  ...or are you?  ★', self.C['red'], H*0.46, 170),
+        ]
+        for txt, color, sy, sign_w in signs:
+            sign_h = 32
+            bx = pole_x - sign_w*0.5
+            c.create_rectangle(bx+4, sy+4, bx+sign_w+4, sy+sign_h+4, fill='#000000', outline='')
+            c.create_rectangle(bx, sy, bx+sign_w, sy+sign_h,
+                                fill=self._darken(color), outline=color, width=2)
+            c.create_text(bx+sign_w/2, sy+sign_h/2, text=txt, fill=color,
+                          font=('Courier', 12, 'bold'))
+
+        fx = W * 0.72
+        fy = ground_y - 10
+        c.create_line(fx, fy-40, fx, fy-10, fill='#EAEDF3', width=3)
+        c.create_oval(fx-12, fy-66, fx+12, fy-42, outline='#EAEDF3', width=3)
+        c.create_line(fx, fy-35, fx+22, fy-50, fill='#EAEDF3', width=3)
+        c.create_line(fx, fy-35, fx-16, fy-28, fill='#EAEDF3', width=3)
+        c.create_line(fx, fy-10, fx-12, fy+20, fill='#EAEDF3', width=3)
+        c.create_line(fx, fy-10, fx+12, fy+20, fill='#EAEDF3', width=3)
+        for i, (qx, qy) in enumerate([(fx+18,fy-75),(fx+28,fy-85),(fx+10,fy-85)]):
+            c.create_text(qx, qy, text='?', fill=self.C['amber'],
+                          font=('Courier', 14-i, 'bold'))
+
+        gx0 = W * 0.75
+        gy0 = H * 0.08
+        cell = 34
+        grid_labels = [['A','B','C','D'],['E','F','G','H'],
+                       ['I','J','K','L'],['M','N','O','P']]
+        arrows = ['→','↘','↓','↙','→','↗','↑','↖','↘','↓','↗','★','→','↑','↗','★']
+        for row in range(4):
+            for col in range(4):
+                cx0 = gx0 + col*cell
+                cy0 = gy0 + row*cell
+                border_col = self.C['gold'] if grid_labels[row][col] in ('A','P') else self.C['border']
+                fill_col = '#1C2950' if grid_labels[row][col] in ('A','P') else '#161B22'
+                c.create_rectangle(cx0, cy0, cx0+cell-2, cy0+cell-2,
+                                   fill=fill_col, outline=border_col, width=1)
+                c.create_text(cx0+cell*0.35, cy0+cell*0.38,
+                              text=grid_labels[row][col],
+                              fill=self.C['gold'] if grid_labels[row][col] in ('A','P') else self.C['text'],
+                              font=('Courier', 8, 'bold'))
+                c.create_text(cx0+cell*0.68, cy0+cell*0.68,
+                              text=arrows[row*4+col],
+                              fill=self.C['text2'], font=('Courier', 8))
+
+        title_y = H * 0.72
+        c.create_text(W/2+3, title_y+3, text='SIGNPOST', fill='#000000',
+                      font=('Georgia', 52, 'bold'))
+        c.create_text(W/2, title_y, text='SIGNPOST', fill=self.C['gold'],
+                      font=('Georgia', 52, 'bold'))
+
+        sub_y = title_y + 52
+        c.create_text(W/2, sub_y,
+                      text='The Arrow-Path Puzzle  ·  A→P, All 16 Squares',
+                      fill=self.C['text2'], font=('Courier', 13))
+        c.create_text(W/2, sub_y+32,
+                      text='"Just follow the arrows. It\'s not rocket science."  —  The Arrows (who are lying)',
+                      fill=self.C['amber'], font=('Courier', 11, 'italic'))
+
+        btn_y = H * 0.90
+        self._draw_start_button(c, W/2, btn_y, 220, 52)
+
+    def _darken(self, hex_col):
+        hex_col = hex_col.lstrip('#')
+        r, g, b = int(hex_col[0:2],16), int(hex_col[2:4],16), int(hex_col[4:6],16)
+        return '#{:02x}{:02x}{:02x}'.format(r//3, g//3, b//3)
+
+    def _draw_start_button(self, c, cx, cy, w, h):
+        x0, y0 = cx-w/2, cy-h/2
+        x1, y1 = cx+w/2, cy+h/2
+        for i in range(4, 0, -1):
+            alpha_col = ['#1A4A1A','#1F5A1F','#246024','#2A702A'][i-1]
+            c.create_rectangle(x0-i, y0-i, x1+i, y1+i, fill='', outline=alpha_col, width=1)
+        rect = c.create_rectangle(x0, y0, x1, y1, fill='#1A3A1A',
+                                  outline=self.C['green'], width=2)
+        text = c.create_text(cx, cy, text='▶   START GAME',
+                             fill=self.C['green'], font=('Courier', 16, 'bold'))
+
+        def on_enter(e):
+            c.itemconfig(rect, fill='#2A5A2A', outline='#6FE0A0')
+            c.itemconfig(text, fill='#6FE0A0')
+
+        def on_leave(e):
+            c.itemconfig(rect, fill='#1A3A1A', outline=self.C['green'])
+            c.itemconfig(text, fill=self.C['green'])
+
+        def on_click(e):
+            self.destroy()
+            self.on_start()
+
+        for tag_id in (rect, text):
+            c.tag_bind(tag_id, '<Enter>', on_enter)
+            c.tag_bind(tag_id, '<Leave>', on_leave)
+            c.tag_bind(tag_id, '<Button-1>', on_click)
+
+    def destroy(self):
+        self.frame.destroy()
+
+
+# ═══════════════════════════════════════════════════════════════
+#   DIFFICULTY SCREEN
+# ═══════════════════════════════════════════════════════════════
+
+class DifficultyScreen:
+    C = {
+        'bg': '#0D1117', 'surface': '#161B22', 'gold': '#F0C040',
+        'amber': '#E8A838', 'text': '#EAEDF3', 'text2': '#8A90A0',
+        'border': '#30363D', 'green': '#4CAF82', 'red': '#E05C5C',
+        'blue': '#5B9CF6',
+    }
+
+    def __init__(self, root, on_difficulty_chosen):
+        self.root = root
+        self.on_chosen = on_difficulty_chosen
+        self.selected = tk.StringVar(value='')
+
+        self.frame = tk.Frame(root, bg=self.C['bg'])
+        self.frame.pack(fill='both', expand=True)
+
+        self._build()
+
+    def _build(self):
+        f = self.frame
+        f.grid_rowconfigure(0, weight=1)
+        f.grid_columnconfigure(0, weight=1)
+
+        center = tk.Frame(f, bg=self.C['bg'])
+        center.grid(row=0, column=0)
+
+        tk.Label(center, text='SIGNPOST', font=('Georgia', 38, 'bold'),
+                 fg=self.C['gold'], bg=self.C['bg']).pack(pady=(40, 0))
+        tk.Label(center, text='Choose Your Doom  —  or a Reasonable Challenge',
+                 font=('Courier', 12, 'italic'), fg=self.C['text2'],
+                 bg=self.C['bg']).pack(pady=(4, 0))
+
+        quote_frame = tk.Frame(center, bg=self.C['surface'],
+                               highlightbackground=self.C['amber'], highlightthickness=1)
+        quote_frame.pack(pady=22, padx=40, fill='x')
+        tk.Label(quote_frame, text=random.choice(FUNNY_QUOTES),
+                 font=('Courier', 11, 'italic'), fg=self.C['amber'], bg=self.C['surface'],
+                 wraplength=520, justify='center', pady=18, padx=24).pack()
+
+        legend = tk.Frame(center, bg=self.C['bg'])
+        legend.pack(pady=(0, 10))
+        tk.Label(legend,
+                 text='CPU Blunder %  —  higher % means the CPU messes up MORE often (easier for you!)',
+                 font=('Courier', 10), fg=self.C['text2'], bg=self.C['bg']).pack()
+
+        # ── Difficulty cards ───────────────────────────────────
+        btn_row = tk.Frame(center, bg=self.C['bg'])
+        btn_row.pack(pady=10)
+
+        self._diff_btns = {}
+
+        diffs = [
+            ('easy',   '😴  EASY',   self.C['green'],
+             'CPU blunders: ~60–85%\n"The CPU forgot what arrows are."\nPerfect for warm-ups.'),
+            ('medium', '😤  MEDIUM', self.C['amber'],
+             'CPU blunders: ~35–60%\n"The CPU read half the manual."\nA fair fight. Mostly.'),
+            ('hard',   '💀  HARD',   self.C['red'],
+             'CPU blunders: ~10–30%\n"The CPU has memorised every path."\nGood luck. You\'ll need it.'),
+        ]
+
+        for key, lbl, color, desc_text in diffs:
+            col_frame = tk.Frame(btn_row, bg=self.C['bg'])
+            col_frame.pack(side='left', padx=18)
+
+            outer = tk.Frame(col_frame, bg=self.C['border'], padx=2, pady=2)
+            outer.pack()
+
+            btn_frame = tk.Frame(outer, bg=self.C['surface'], cursor='hand2',
+                                 width=180, height=80)
+            btn_frame.pack()
+            btn_frame.pack_propagate(False)
+
+            lbl_widget = tk.Label(btn_frame, text=lbl, font=('Courier', 15, 'bold'),
+                                  fg=color, bg=self.C['surface'], cursor='hand2')
+            lbl_widget.place(relx=0.5, rely=0.38, anchor='center')
+
+            lo, hi = DIFFICULTY_RANGES[key]
+            pct_widget = tk.Label(btn_frame,
+                                  text=f'blunder rate  {lo}–{hi}%',
+                                  font=('Courier', 9), fg=self.C['text2'],
+                                  bg=self.C['surface'], cursor='hand2')
+            pct_widget.place(relx=0.5, rely=0.72, anchor='center')
+
+            desc_lbl = tk.Label(col_frame, text=desc_text,
+                                font=('Courier', 9), fg=self.C['text2'],
+                                bg=self.C['bg'], justify='center', wraplength=176)
+            desc_lbl.pack(pady=(8, 0))
+
+            self._diff_btns[key] = {
+                'outer': outer, 'frame': btn_frame,
+                'lbl': lbl_widget, 'pct': pct_widget, 'color': color
+            }
+
+            for widget in (btn_frame, lbl_widget, pct_widget):
+                widget.bind('<Enter>', lambda e, k=key: self._hover(k, True))
+                widget.bind('<Leave>', lambda e, k=key: self._hover(k, False))
+                widget.bind('<Button-1>', lambda e, k=key: self._select(k))
+
+        # ── Custom PCT input ───────────────────────────────────
+        custom_frame = tk.Frame(center, bg=self.C['bg'])
+        custom_frame.pack(pady=(16, 0))
+
+        tk.Label(custom_frame,
+                 text='Or enter a custom blunder %  (0 = genius CPU,  100 = blind CPU):',
+                 font=('Courier', 10), fg=self.C['text2'], bg=self.C['bg']).pack()
+
+        input_row = tk.Frame(custom_frame, bg=self.C['bg'])
+        input_row.pack(pady=8)
+
+        self.custom_entry = tk.Entry(input_row, width=6, font=('Courier', 14, 'bold'),
+                                     bg=self.C['surface'], fg=self.C['gold'],
+                                     insertbackground=self.C['gold'],
+                                     relief='flat', bd=0,
+                                     highlightbackground=self.C['border'],
+                                     highlightthickness=1, justify='center')
+        self.custom_entry.pack(side='left', padx=(0, 8))
+
+        tk.Button(input_row, text='USE THIS %',
+                  font=('Courier', 11, 'bold'),
+                  bg=self.C['surface'], fg=self.C['blue'],
+                  activebackground=self.C['border'], activeforeground=self.C['text'],
+                  relief='flat', bd=0, padx=12, pady=4, cursor='hand2',
+                  command=self._use_custom).pack(side='left')
+
+        self.custom_err = tk.Label(input_row, text='', font=('Courier', 10),
+                                   fg=self.C['red'], bg=self.C['bg'])
+        self.custom_err.pack(side='left', padx=8)
+
+        self.confirm_btn = tk.Button(
+            center, text='LOCK IN & PLAY  ▶',
+            font=('Courier', 15, 'bold'),
+            bg='#1A3A1A', fg=self.C['green'],
+            activebackground='#2A5A2A', activeforeground='#6FE0A0',
+            relief='flat', bd=0, padx=28, pady=12, cursor='hand2',
+            state='disabled', command=self._confirm
+        )
+        self.confirm_btn.pack(pady=28)
+
+        self._pending_pct = None
+
+    def _hover(self, key, entering):
+        w = self._diff_btns[key]
+        if entering:
+            # Use each card's unique themed hover colors instead of generic darken
+            theme = CARD_HOVER_THEME[key]
+            w['frame'].config(bg=theme['bg'])
+            w['lbl'].config(bg=theme['bg'])
+            w['pct'].config(bg=theme['bg'])
+            w['outer'].config(bg=theme['border'])
+        else:
+            is_sel = (self.selected.get() == key)
+            bg = self._darken(w['color'], 0.30) if is_sel else self.C['surface']
+            border = w['color'] if is_sel else self.C['border']
+            w['frame'].config(bg=bg)
+            w['lbl'].config(bg=bg)
+            w['pct'].config(bg=bg)
+            w['outer'].config(bg=border)
+
+    def _select(self, key):
+        self.selected.set(key)
+        for k, w in self._diff_btns.items():
+            if k == key:
+                bg = self._darken(w['color'], 0.30)
+                w['frame'].config(bg=bg)
+                w['lbl'].config(bg=bg)
+                w['pct'].config(bg=bg)
+                w['outer'].config(bg=w['color'])
+            else:
+                w['frame'].config(bg=self.C['surface'])
+                w['lbl'].config(bg=self.C['surface'])
+                w['pct'].config(bg=self.C['surface'])
+                w['outer'].config(bg=self.C['border'])
+
+        lo, hi = DIFFICULTY_RANGES[key]
+        self._pending_pct = random.randint(lo, hi)
+        self.confirm_btn.config(state='normal')
+        self.custom_err.config(text='')
+        self.custom_entry.delete(0, tk.END)
+
+    def _use_custom(self):
+        val = self.custom_entry.get().strip()
+        try:
+            pct = int(val)
+            if not (0 <= pct <= 100):
+                raise ValueError
+            self._pending_pct = pct
+            self.selected.set('custom')
+            for w in self._diff_btns.values():
+                w['frame'].config(bg=self.C['surface'])
+                w['lbl'].config(bg=self.C['surface'])
+                w['pct'].config(bg=self.C['surface'])
+                w['outer'].config(bg=self.C['border'])
+            self.custom_err.config(text=f'✓  Set to {pct}%', fg=self.C['green'])
+            self.confirm_btn.config(state='normal')
+        except ValueError:
+            self.custom_err.config(text='Enter a whole number 0–100', fg=self.C['red'])
+
+    def _confirm(self):
+        if self._pending_pct is None:
+            return
+        pct = self._pending_pct
+        self.frame.destroy()
+        self.on_chosen(pct)
+
+    def _darken(self, hex_col, factor=0.4):
+        hex_col = hex_col.lstrip('#')
+        r, g, b = int(hex_col[0:2],16), int(hex_col[2:4],16), int(hex_col[4:6],16)
+        return '#{:02x}{:02x}{:02x}'.format(max(0,int(r*factor)),
+                                             max(0,int(g*factor)),
+                                             max(0,int(b*factor)))
+
+
+# ═══════════════════════════════════════════════════════════════
+#   MAIN GAME GUI
+# ═══════════════════════════════════════════════════════════════
 
 class PuzzleGameGUI:
     C = {
-        'bg':             '#1C1F26',
-        'surface':        '#252930',
-        'card':           '#2E3340',
-        'text_primary':   '#EAEDF3',
-        'text_secondary': '#8A90A0',
-        'text_dim':       '#545B6E',
-        'accent_blue':    '#5B9CF6',
-        'accent_green':   '#4CAF82',
-        'accent_amber':   '#E8A838',
-        'accent_red':     '#E05C5C',
-        'border':         '#343A4A',
-        'border_light':   '#454D60',
-        'divider':        '#2C3040',
+        'bg': '#1C1F26', 'surface': '#252930', 'card': '#2E3340',
+        'text_primary': '#EAEDF3', 'text_secondary': '#8A90A0', 'text_dim': '#545B6E',
+        'accent_blue': '#5B9CF6', 'accent_green': '#4CAF82',
+        'accent_amber': '#E8A838', 'accent_red': '#E05C5C',
+        'border': '#343A4A', 'border_light': '#454D60', 'divider': '#2C3040',
     }
 
-    def __init__(self, root):
+    def __init__(self, root, mistake_pct: int = 55):
         self.root = root
         self.root.title("Signpost - Puzzle")
         self.root.configure(bg=self.C['bg'])
 
+        self.mistake_pct = mistake_pct
+        self.mistake_chance = mistake_pct / 100.0
         self.buttons = {}
         self.timer_seconds = 0
         self.timer_max = 15
         self.timer_id = None
 
-        # ── Sound ──────────────────────────────────────────────
         self.sfx = SoundManager()
         if not SOUND_AVAILABLE:
-            print("[SoundManager] pygame not found — sound disabled.\n"
-                  "  Install with:  pip install pygame numpy")
-        # ──────────────────────────────────────────────────────
+            print("[SoundManager] pygame not found — sound disabled.")
 
         self._build_puzzle()
         self.create_gui()
@@ -567,21 +869,19 @@ class PuzzleGameGUI:
     def _build_puzzle(self):
         self.graph = generate_signpost_puzzle()
         self.game_state = GameState(self.graph)
-        self.cpu_player = BacktrackingCPU(self.graph, self.game_state)
+        self.cpu_player = BacktrackingCPU(self.graph, self.game_state,
+                                          mistake_chance=self.mistake_chance)
 
     def _label(self, parent, text, font, fg=None, bg=None, anchor='center', **kw):
-        return tk.Label(
-            parent, text=text, font=font,
-            fg=fg or self.C['text_primary'],
-            bg=bg or self.C['surface'],
-            anchor=anchor, **kw
-        )
+        return tk.Label(parent, text=text, font=font,
+                        fg=fg or self.C['text_primary'],
+                        bg=bg or self.C['surface'],
+                        anchor=anchor, **kw)
 
     def create_gui(self):
         root_pad = tk.Frame(self.root, bg=self.C['bg'])
         root_pad.pack(fill='both', expand=True, padx=28, pady=22)
 
-        # Header
         header = tk.Frame(root_pad, bg=self.C['bg'])
         header.pack(fill='x', pady=(0, 20))
         tk.Label(header, text="SIGNPOST", font=('Georgia', 30, 'bold'),
@@ -589,15 +889,21 @@ class PuzzleGameGUI:
         tk.Label(header, text="  Puzzle  —  Arrow-Based Edges", font=('Georgia', 14, 'italic'),
                  fg=self.C['text_secondary'], bg=self.C['bg']).pack(side='left', pady=(12, 0))
 
-        # Mute toggle button
+        self.diff_badge = tk.Label(
+            header,
+            text=f"⚙  {self._get_diff_label()}  ({self.mistake_pct}% blunder)",
+            font=('Courier', 10, 'bold'),
+            bg=self.C['card'], fg=self._get_diff_color(),
+            relief='flat', padx=10, pady=4)
+        self.diff_badge.pack(side='right', pady=(12, 0), padx=(0, 8))
+
         self.muted = False
         self.mute_btn = tk.Button(
             header, text="🔊  Sound ON", font=('Helvetica', 10),
             bg=self.C['card'], fg=self.C['accent_green'],
             activebackground=self.C['border'], activeforeground=self.C['text_primary'],
             relief='flat', bd=0, padx=10, pady=4, cursor='hand2',
-            command=self.toggle_mute
-        )
+            command=self.toggle_mute)
         self.mute_btn.pack(side='right', pady=(12, 0))
 
         tk.Frame(root_pad, bg=self.C['border'], height=1).pack(fill='x', pady=(0, 18))
@@ -609,7 +915,6 @@ class PuzzleGameGUI:
         body.grid_columnconfigure(2, weight=4, minsize=340)
         body.grid_rowconfigure(0, weight=1)
 
-        # LEFT: Grid
         left = tk.Frame(body, bg=self.C['bg'])
         left.grid(row=0, column=0, sticky='nsew')
         left.grid_rowconfigure(0, weight=1)
@@ -621,14 +926,13 @@ class PuzzleGameGUI:
 
         self._label(grid_card, "GRID MATRIX", font=('Helvetica', 11, 'bold'),
                     fg=self.C['text_secondary'], bg=self.C['surface']).grid(
-                        row=0, column=0, columnspan=4, pady=(18, 12), padx=22
-                    )
+            row=0, column=0, columnspan=4, pady=(18, 12), padx=22)
 
         for label, node in self.graph.nodes.items():
             cell = tk.Frame(grid_card, bg=self.C['card'],
                             highlightbackground=self.C['border_light'], highlightthickness=1,
                             width=96, height=80)
-            cell.grid(row=node.row + 1, column=node.col, padx=6, pady=6)
+            cell.grid(row=node.row+1, column=node.col, padx=6, pady=6)
             cell.grid_propagate(False)
             cell.grid_rowconfigure(0, weight=1)
             cell.grid_rowconfigure(1, weight=1)
@@ -651,10 +955,8 @@ class PuzzleGameGUI:
 
         tk.Frame(grid_card, bg=self.C['surface'], height=14).grid(row=6, column=0, columnspan=4)
 
-        # Divider
         tk.Frame(body, bg=self.C['border'], width=1).grid(row=0, column=1, sticky='ns', padx=20)
 
-        # RIGHT panels
         right = tk.Frame(body, bg=self.C['bg'])
         right.grid(row=0, column=2, sticky='nsew')
         right.grid_rowconfigure(0, weight=1)
@@ -662,15 +964,13 @@ class PuzzleGameGUI:
         right.grid_rowconfigure(2, weight=0)
         right.grid_columnconfigure(0, weight=1)
 
-        # Move History
         hist_card = tk.Frame(right, bg=self.C['surface'],
                              highlightbackground=self.C['border'], highlightthickness=1)
         hist_card.grid(row=0, column=0, sticky='nsew', pady=(0, 12))
 
         self._label(hist_card, "MOVE HISTORY", font=('Helvetica', 11, 'bold'),
                     fg=self.C['text_secondary'], bg=self.C['surface']).pack(
-                        anchor='w', padx=18, pady=(14, 8)
-                    )
+            anchor='w', padx=18, pady=(14, 8))
         tk.Frame(hist_card, bg=self.C['divider'], height=1).pack(fill='x', padx=18)
 
         self.history = tk.Text(hist_card, width=34, height=13, font=('Courier New', 10),
@@ -678,24 +978,22 @@ class PuzzleGameGUI:
                                relief='flat', bd=0, wrap='word', padx=18, pady=10,
                                cursor='arrow', selectbackground=self.C['card'])
         self.history.pack(fill='both', expand=True)
-        self.history.tag_config("move_ok",  foreground=self.C['accent_green'])
+        self.history.tag_config("move_ok", foreground=self.C['accent_green'])
         self.history.tag_config("move_err", foreground=self.C['accent_red'])
-        self.history.tag_config("meta",     foreground=self.C['text_dim'])
+        self.history.tag_config("meta", foreground=self.C['text_dim'])
         self.history.config(state='disabled')
 
         self._hist("Game started — make your move.", "meta")
-        self._hist("CPU: pure backtracking DFS.", "meta")
+        self._hist(f"Difficulty: {self._get_diff_label()} ({self.mistake_pct}% blunder)", "meta")
         self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
 
-        # Status
         status_card = tk.Frame(right, bg=self.C['surface'],
                                highlightbackground=self.C['border'], highlightthickness=1)
         status_card.grid(row=1, column=0, sticky='ew', pady=(0, 12))
 
         self._label(status_card, "SYSTEM STATUS", font=('Helvetica', 11, 'bold'),
                     fg=self.C['text_secondary'], bg=self.C['surface']).pack(
-                        anchor='w', padx=18, pady=(14, 6)
-                    )
+            anchor='w', padx=18, pady=(14, 6))
         tk.Frame(status_card, bg=self.C['divider'], height=1).pack(fill='x', padx=18)
 
         inner = tk.Frame(status_card, bg=self.C['surface'])
@@ -720,15 +1018,13 @@ class PuzzleGameGUI:
         self.algo_label.config(fg=self.C['accent_amber'], text="Backtracking DFS")
         tk.Frame(status_card, bg=self.C['surface'], height=6).pack()
 
-        # Scoreboard
         score_card = tk.Frame(right, bg=self.C['surface'],
                               highlightbackground=self.C['border'], highlightthickness=1)
         score_card.grid(row=2, column=0, sticky='ew')
 
         self._label(score_card, "SCOREBOARD", font=('Helvetica', 11, 'bold'),
                     fg=self.C['text_secondary'], bg=self.C['surface']).pack(
-                        anchor='w', padx=18, pady=(14, 6)
-                    )
+            anchor='w', padx=18, pady=(14, 6))
         tk.Frame(score_card, bg=self.C['divider'], height=1).pack(fill='x', padx=18)
 
         score_inner = tk.Frame(score_card, bg=self.C['surface'])
@@ -736,7 +1032,7 @@ class PuzzleGameGUI:
 
         hdr = tk.Frame(score_inner, bg=self.C['surface'])
         hdr.pack(fill='x', pady=(0, 6))
-        for txt, w, anc in [("Player", 10, 'w'), ("Correct", 8, 'center'), ("Errors", 8, 'center')]:
+        for txt, w, anc in [("Player",10,'w'),("Correct",8,'center'),("Errors",8,'center')]:
             tk.Label(hdr, text=txt, width=w, anchor=anc, font=('Helvetica', 10, 'bold'),
                      fg=self.C['text_dim'], bg=self.C['surface']).pack(side='left')
         tk.Frame(score_inner, bg=self.C['border'], height=1).pack(fill='x', pady=4)
@@ -761,9 +1057,20 @@ class PuzzleGameGUI:
 
         tk.Frame(score_card, bg=self.C['surface'], height=8).pack()
 
-    # ── Sound helpers ──────────────────────────────────────────
+    def _get_diff_label(self):
+        p = self.mistake_pct
+        if p >= 60:   return 'EASY'
+        elif p >= 35: return 'MEDIUM'
+        elif p >= 10: return 'HARD'
+        else:         return f'CUSTOM ({p}%)'
+
+    def _get_diff_color(self):
+        p = self.mistake_pct
+        if p >= 60:   return self.C['accent_green']
+        elif p >= 35: return self.C['accent_amber']
+        else:         return self.C['accent_red']
+
     def play(self, name: str):
-        """Play a named sound unless muted."""
         if not self.muted:
             self.sfx.play(name)
 
@@ -772,9 +1079,8 @@ class PuzzleGameGUI:
         if self.muted:
             self.mute_btn.config(text="🔇  Sound OFF", fg=self.C['accent_red'])
         else:
-            self.mute_btn.config(text="🔊  Sound ON",  fg=self.C['accent_green'])
-            self.play("tick")          # play a tiny confirmation beep
-    # ──────────────────────────────────────────────────────────
+            self.mute_btn.config(text="🔊  Sound ON", fg=self.C['accent_green'])
+            self.play("tick")
 
     def _hist(self, text, tag="move_ok"):
         self.history.config(state='normal')
@@ -789,26 +1095,20 @@ class PuzzleGameGUI:
     def update_timer(self):
         if self.game_state.game_over:
             return
-
         if self.game_state.current_turn == 'Human':
             self.timer_seconds += 1
             remaining = self.timer_max - self.timer_seconds
             color = self.C['accent_red'] if remaining <= 5 else self.C['text_primary']
             self.timer_label.config(text=f"{remaining}s", fg=color)
-
-            # ── Tick sounds ─────────────────────────────────────
             if remaining <= 5:
-                self.play("tick_warn")   # urgent tick for last 5 s
+                self.play("tick_warn")
             else:
-                self.play("tick")        # subtle tick otherwise
-            # ────────────────────────────────────────────────────
-
+                self.play("tick")
             if self.timer_seconds >= self.timer_max:
                 self.on_timeout()
                 return
         else:
             self.timer_label.config(text="CPU thinking...", fg=self.C['text_dim'])
-
         self.timer_id = self.root.after(1000, self.update_timer)
 
     def reset_timer(self):
@@ -820,7 +1120,7 @@ class PuzzleGameGUI:
 
     def on_timeout(self):
         self._hist("Human timed out", "move_err")
-        self.play("timeout")                           # ← timeout sound
+        self.play("timeout")
         self.game_state.human_illegal_moves += 1
         self.game_state.switch_turn()
         self.reset_timer()
@@ -830,19 +1130,16 @@ class PuzzleGameGUI:
     def on_cell_click(self, label):
         if self.game_state.current_turn != 'Human' or self.game_state.game_over:
             return
-
         success, _ = self.game_state.make_move(label)
         if success:
             self._hist(f"Human  >  {label}", "move_ok")
-            self.play("correct")                       # ← correct move chime
+            self.play("correct")
         else:
             self._hist(f"Human  >  {label}  (invalid)", "move_err")
-            self.play("error")                         # ← error buzz
+            self.play("error")
             self.flash_error(label)
-
         self.reset_timer()
         self.update_display()
-
         if self.game_state.game_over:
             self.show_winner()
         else:
@@ -851,46 +1148,40 @@ class PuzzleGameGUI:
     def cpu_turn(self):
         if self.game_state.game_over:
             return
-
         move = self.cpu_player.get_best_move()
         if move is None:
             self._hist("CPU has no legal moves!", "move_err")
-            self.play("error")                         # ← CPU fail sound
+            self.play("error")
             self.game_state.cpu_illegal_moves += 1
             self.game_state.switch_turn()
             self.reset_timer()
             self.update_display()
             return
-
         success, _ = self.game_state.make_move(move)
         if success:
             self._hist(f"CPU    >  {move}  [Backtracking DFS]", "move_ok")
-            self.play("cpu_move")                      # ← CPU move beep
+            self.play("cpu_move")
             self.flash_cpu(move)
         else:
-            self._hist(f"CPU    >  {move}  (wrong guess!)", "move_err")
-            self.play("error")                         # ← error buzz
+            self._hist(f"CPU    >  {move}  (wrong guess! 🎲)", "move_err")
+            self.play("error")
             self.flash_error(move)
-
         self.reset_timer()
         self.update_display()
-
         if self.game_state.game_over:
             self.root.after(900, self.show_winner)
 
     def flash_cell(self, label, colors):
         if not label or label not in self.buttons:
             return
-
         def step(i):
             if i < len(colors):
                 w = self.buttons[label]
-                for k in ('frame', 'letter', 'arrow'):
+                for k in ('frame','letter','arrow'):
                     w[k].config(bg=colors[i])
-                self.root.after(150, lambda: step(i + 1))
+                self.root.after(150, lambda: step(i+1))
             else:
                 self.update_display()
-
         step(0)
 
     def flash_error(self, label):
@@ -905,7 +1196,6 @@ class PuzzleGameGUI:
         for label, node in self.graph.nodes.items():
             w = self.buttons[label]
             is_current = (label == self.game_state.current_position)
-
             if is_current:
                 bg, border, bw = '#1F3557', self.C['accent_blue'], 2
                 fg_l = fg_a = self.C['accent_blue']
@@ -919,7 +1209,6 @@ class PuzzleGameGUI:
                 fg_l = self.C['text_primary']
                 fg_a = self.C['text_secondary']
                 w['letter'].config(text=label, font=('Helvetica', 18, 'bold'))
-
             w['frame'].config(bg=bg, highlightbackground=border, highlightthickness=bw)
             w['letter'].config(bg=bg, fg=fg_l)
             w['arrow'].config(bg=bg, fg=fg_a, text=node.arrow_direction)
@@ -927,10 +1216,10 @@ class PuzzleGameGUI:
         turn = self.game_state.current_turn
         self.turn_label.config(
             text=turn,
-            fg=self.C['accent_blue'] if turn == 'Human' else self.C['text_secondary']
-        )
+            fg=self.C['accent_blue'] if turn == 'Human' else self.C['text_secondary'])
         node = self.graph.nodes[self.game_state.current_position]
-        self.position_label.config(text=f"{self.game_state.current_position}  (step {node.visit_order})")
+        self.position_label.config(
+            text=f"{self.game_state.current_position}  (step {node.visit_order})")
 
         gs = self.game_state
         self.human_correct_lbl.config(text=str(gs.human_correct_moves))
@@ -942,20 +1231,13 @@ class PuzzleGameGUI:
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
-
         gs = self.game_state
-
-        # ── Play win / lose / draw fanfare ────────────────────
-        if gs.winner == 'Human':
-            self.play("win")
-        else:
-            self.play("lose")
-        # ──────────────────────────────────────────────────────
-
+        self.play("win" if gs.winner == 'Human' else "lose")
         msg = (f"Winner:  {gs.winner}\n\n"
                f"Human    Correct: {gs.human_correct_moves}   Errors: {gs.human_illegal_moves}\n"
                f"CPU      Correct: {gs.cpu_correct_moves}   Errors: {gs.cpu_illegal_moves}\n\n"
-               f"Click OK to play again with a new random path.")
+               f"Difficulty: {self._get_diff_label()} ({self.mistake_pct}% blunder rate)\n\n"
+               f"Click OK to play again.")
         messagebox.showinfo("Game Over — Signpost", msg)
         self.reset_game()
 
@@ -963,43 +1245,42 @@ class PuzzleGameGUI:
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self.root.configure(bg='#0D1117')
+        DifficultyScreen(self.root, self._restart_with_difficulty)
 
-        self._build_puzzle()
-        self.play("reset")                             # ← reset chime
-
-        for label, node in self.graph.nodes.items():
-            w = self.buttons[label]
-            bg = self.C['card']
-            w['frame'].config(bg=bg, highlightbackground=self.C['border_light'], highlightthickness=1)
-            w['letter'].config(text=label, bg=bg, fg=self.C['text_primary'], font=('Helvetica', 18, 'bold'))
-            w['arrow'].config(text=node.arrow_direction, bg=bg, fg=self.C['text_secondary'])
-
-        self.history.config(state='normal')
-        self.history.delete('1.0', tk.END)
-        self.history.config(state='disabled')
-
-        self._hist("Game reset — new random path!", "meta")
-        self._hist("CPU: pure backtracking DFS.", "meta")
-        self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
-
-        self.human_correct_lbl.config(text="0")
-        self.human_errors_lbl.config(text="0")
-        self.cpu_correct_lbl.config(text="0")
-        self.cpu_errors_lbl.config(text="0")
-
-        self.algo_label.config(text="Backtracking DFS")
-        self.update_display()
-        self.timer_seconds = 0
-        self.start_timer()
+    def _restart_with_difficulty(self, pct: int):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self.root.configure(bg=self.C['bg'])
+        self.__init__(self.root, mistake_pct=pct)
 
 
-# ====================
-# MAIN
-# ====================
+# ═══════════════════════════════════════════════════════════════
+#   APP ENTRY POINT
+# ═══════════════════════════════════════════════════════════════
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Signpost - Puzzle")
+        self.root.configure(bg='#0D1117')
+        self.splash = SplashScreen(root, self.on_splash_done)
+
+    def on_splash_done(self):
+        DifficultyScreen(self.root, self.on_difficulty_chosen)
+
+    def on_difficulty_chosen(self, mistake_pct: int):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self.root.configure(bg='#1C1F26')
+        PuzzleGameGUI(self.root, mistake_pct=mistake_pct)
+
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.geometry("1100x680")
+    root.geometry("1100x700")
     root.minsize(1000, 620)
-    PuzzleGameGUI(root)
+    App(root)
     root.mainloop()
