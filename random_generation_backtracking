@@ -763,7 +763,6 @@ class DifficultyScreen:
     def _hover(self, key, entering):
         w = self._diff_btns[key]
         if entering:
-            # Use each card's unique themed hover colors instead of generic darken
             theme = CARD_HOVER_THEME[key]
             w['frame'].config(bg=theme['bg'])
             w['lbl'].config(bg=theme['bg'])
@@ -985,7 +984,6 @@ class PuzzleGameGUI:
 
         self._hist("Game started — make your move.", "meta")
         self._hist(f"Difficulty: {self._get_diff_label()} ({self.mistake_pct}% blunder)", "meta")
-        self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
 
         status_card = tk.Frame(right, bg=self.C['surface'],
                                highlightbackground=self.C['border'], highlightthickness=1)
@@ -1284,3 +1282,4 @@ if __name__ == "__main__":
     root.minsize(1000, 620)
     App(root)
     root.mainloop()
+    
