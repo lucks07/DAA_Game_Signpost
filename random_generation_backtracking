@@ -18,9 +18,12 @@ except Exception:
 def _make_sound(samples: list, volume: float = 0.6):
     if not SOUND_AVAILABLE:
         return None
+
     peak = volume * 32767
     raw = _array.array('h', [max(-32768, min(32767, int(s * peak))) for s in samples])
-    sound = pygame.sndarray.make_sound(raw)
+
+    sound = pygame.mixer.Sound(buffer=raw)
+
     return sound
 
 
@@ -43,6 +46,7 @@ def _sine_samples(freq: float, duration: float, sr: int = 44100,
 def _square_samples(freq: float, duration: float, sr: int = 44100,
                     attack: float = 0.005, decay: float = 0.04,
                     duty: float = 0.5, harmonics: int = 8) -> list:
+
     n = int(sr * duration)
     a_n, d_n = int(attack * sr), int(decay * sr)
     out = []
@@ -82,6 +86,7 @@ def _concat(*parts) -> list:
 
 
 class SoundManager:
+    """Pre-generates and caches all game sounds — zero external files needed."""
 
     def __init__(self):
         self._sounds: dict = {}
@@ -92,6 +97,7 @@ class SoundManager:
     def _build_sounds(self):
         sr = 44100
 
+        # ── Correct human move: crispy 8-bit two-note coin pickup  ✔
         self._sounds["correct"] = _make_sound(_concat(
             _square_samples(659.25, 0.06, sr, attack=0.003, decay=0.02, harmonics=6),
             _square_samples(987.77, 0.10, sr, attack=0.003, decay=0.07, harmonics=6),
@@ -124,6 +130,7 @@ class SoundManager:
             _square_samples(233.08, 0.22, sr, attack=0.005, decay=0.16, harmonics=5),
         ), 0.55)
 
+        # ── Human wins: Mario Course Clear — full chiptune fanfare 🎉
         #   Arpeggio burst → staccato phrase → triumphant held finish
         self._sounds["win"] = _make_sound(_concat(
             # rapid arpeggio burst (G5-C6-E6)
@@ -146,6 +153,7 @@ class SoundManager:
             _square_samples(1567.98, 0.45, sr, attack=0.005, decay=0.35, harmonics=7),  # G6 long
         ), 0.50)
 
+        # ── CPU wins / draw: Mario Game Over — gloomy chiptune dirge 💀
         #   Descending chromatic sadness with triangle bass undertone
         self._sounds["lose"] = _make_sound(_concat(
             _square_samples(493.88, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),   # B4
@@ -161,6 +169,7 @@ class SoundManager:
             _triangle_samples(246.94, 0.60, sr, attack=0.010, decay=0.50),              # B3 long fade
         ), 0.55)
 
+        # ── Game reset: cheerful 8-bit upward ping
         self._sounds["reset"] = _make_sound(_concat(
             _square_samples(440, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
             _square_samples(554.37, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
@@ -859,7 +868,7 @@ class PuzzleGameGUI:
             self.play("cpu_move")                      # ← CPU move beep
             self.flash_cpu(move)
         else:
-            self._hist(f"CPU    >  {move}  (wrong guess! 🎲)", "move_err")
+            self._hist(f"CPU    >  {move}  (wrong guess!)", "move_err")
             self.play("error")                         # ← error buzz
             self.flash_error(move)
 
@@ -994,40 +1003,3 @@ if __name__ == "__main__":
     root.minsize(1000, 620)
     PuzzleGameGUI(root)
     root.mainloop()
-```
-
----
-
-## How the Logic Works
-
-### 1. Graph Structure
-The 4×4 grid has 16 nodes (A–P). Edges are **fixed** — they never change. The adjacency list defines which nodes can be reached from which.
-
-### 2. Random Solution Path — `generate_random_solution()`
-This runs **once per game** at startup/reset. It uses shuffled backtracking DFS:
-```
-Start at A, visited = {A}
-
-Try a random neighbor of A  ← random.shuffle() makes it different every game
-  Mark it visited
-  Recurse deeper...
-    If dead end → UNDO (remove from visited, pop from path) ← this is the backtrack
-    Try next neighbor
-  ...
-Until all 16 nodes visited AND current = P → return path
-```
-
-The same algorithm runs twice in the program — once to **generate** the path randomly, once for the **CPU to solve** it deterministically.
-
-### 3. CPU — `BacktrackingCPU`
-Every turn, the CPU runs the same backtracking DFS from the **current mid-game position** using the already-visited nodes as constraints. It finds the remaining path to P and returns `result[1]` — the very next step.
-
-### 4. Game Flow
-```
-Human clicks cell
-  → is_legal_move?  (is it a neighbor? is it unvisited?)
-  → is_correct_move? (does it match solution_path[current + 1]?)
-  → both true: move accepted, turn passes to CPU
-  → either false: error counted, turn still passes to CPU
-
-Winner = whoever has fewer errors when P is reached
