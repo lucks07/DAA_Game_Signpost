@@ -585,6 +585,7 @@ class SplashScreen:
         return '#{:02x}{:02x}{:02x}'.format(r//3, g//3, b//3)
 
     def _draw_start_button(self, c, cx, cy, w, h):
+        self.sfx=SoundManager()
         x0, y0 = cx-w/2, cy-h/2
         x1, y1 = cx+w/2, cy+h/2
         for i in range(4, 0, -1):
@@ -604,6 +605,9 @@ class SplashScreen:
             c.itemconfig(text, fill=self.C['green'])
 
         def on_click(e):
+            self.destroy()
+            self.on_start()
+            self.sfx.play("reset")
             self.destroy()
             self.on_start()
 
@@ -631,6 +635,7 @@ class DifficultyScreen:
     def __init__(self, root, on_difficulty_chosen):
         self.root = root
         self.on_chosen = on_difficulty_chosen
+        self.sfx = SoundManager()
         self.selected = tk.StringVar(value='')
 
         self.frame = tk.Frame(root, bg=self.C['bg'])
@@ -763,6 +768,7 @@ class DifficultyScreen:
     def _hover(self, key, entering):
         w = self._diff_btns[key]
         if entering:
+            # Use each card's unique themed hover colors instead of generic darken
             theme = CARD_HOVER_THEME[key]
             w['frame'].config(bg=theme['bg'])
             w['lbl'].config(bg=theme['bg'])
@@ -778,6 +784,7 @@ class DifficultyScreen:
             w['outer'].config(bg=border)
 
     def _select(self, key):
+        self.sfx.play("tick")
         self.selected.set(key)
         for k, w in self._diff_btns.items():
             if k == key:
@@ -804,6 +811,7 @@ class DifficultyScreen:
             pct = int(val)
             if not (0 <= pct <= 100):
                 raise ValueError
+            self.sfx.play("tick")
             self._pending_pct = pct
             self.selected.set('custom')
             for w in self._diff_btns.values():
@@ -819,6 +827,7 @@ class DifficultyScreen:
     def _confirm(self):
         if self._pending_pct is None:
             return
+        self.sfx.play("reset")
         pct = self._pending_pct
         self.frame.destroy()
         self.on_chosen(pct)
@@ -984,6 +993,7 @@ class PuzzleGameGUI:
 
         self._hist("Game started — make your move.", "meta")
         self._hist(f"Difficulty: {self._get_diff_label()} ({self.mistake_pct}% blunder)", "meta")
+        self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
 
         status_card = tk.Frame(right, bg=self.C['surface'],
                                highlightbackground=self.C['border'], highlightthickness=1)
@@ -1282,4 +1292,3 @@ if __name__ == "__main__":
     root.minsize(1000, 620)
     App(root)
     root.mainloop()
-    
