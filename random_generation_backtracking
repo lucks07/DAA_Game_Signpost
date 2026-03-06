@@ -21,10 +21,20 @@ def _make_sound(samples: list, volume: float = 0.6):
     raw = _array.array('h', [max(-32768, min(32767, int(s * peak))) for s in samples])
     return pygame.mixer.Sound(buffer=raw.tobytes())
 
+
 def _env(i: int, n: int, a_n: int, d_n: int) -> float:
-    if i < a_n: return i / a_n if a_n else 1.0
-    elif i >= n - d_n: return max(0.0, (n - 1 - i) / d_n) if d_n else 1.0
+    if i < a_n:
+        return i / a_n if a_n else 1.0
+    elif i >= n - d_n:
+        return max(0.0, (n - 1 - i) / d_n) if d_n else 1.0
     return 1.0
+
+
+def _sine_samples(freq, duration, sr=44100, attack=0.01, decay=0.05):
+    n = int(sr * duration)
+    a_n, d_n = int(attack * sr), int(decay * sr)
+    return [math.sin(2 * math.pi * freq * i / sr) * _env(i, n, a_n, d_n) for i in range(n)]
+
 
 def _square_samples(freq, duration, sr=44100, attack=0.005, decay=0.04, duty=0.5, harmonics=8):
     n = int(sr * duration)
@@ -38,6 +48,7 @@ def _square_samples(freq, duration, sr=44100, attack=0.005, decay=0.04, duty=0.5
         out.append(val * _env(i, n, a_n, d_n))
     return out
 
+
 def _triangle_samples(freq, duration, sr=44100, attack=0.005, decay=0.06):
     n = int(sr * duration)
     a_n, d_n = int(attack * sr), int(decay * sr)
@@ -49,17 +60,17 @@ def _triangle_samples(freq, duration, sr=44100, attack=0.005, decay=0.06):
         out.append(val * _env(i, n, a_n, d_n))
     return out
 
+
 def _silence(duration, sr=44100):
     return [0.0] * int(sr * duration)
 
+
 def _concat(*parts):
     result = []
-    for p in parts: result.extend(p)
+    for p in parts:
+        result.extend(p)
     return result
 
-# ===============================================================
-#  FIXED CLASSES
-# ===============================================================
 
 class SoundManager:
     def __init__(self):
@@ -73,22 +84,73 @@ class SoundManager:
 
     def _build_sounds(self):
         sr = 44100
-        # Build all sounds once and store them
-        self._sounds["correct"] = _make_sound(_concat(_square_samples(659.25, 0.06, sr), _square_samples(987.77, 0.10, sr)), 0.52)
-        self._sounds["cpu_move"] = _make_sound(_square_samples(330, 0.07, sr), 0.28)
-        self._sounds["error"] = _make_sound(_concat(_square_samples(220, 0.06, sr), _square_samples(164.81, 0.14, sr)), 0.55)
-        self._sounds["tick"] = _make_sound(_square_samples(880, 0.025, sr), 0.20)
-        self._sounds["tick_warn"] = _make_sound(_square_samples(1320, 0.035, sr), 0.40)
-        self._sounds["timeout"] = _make_sound(_concat(_square_samples(392, 0.10, sr), _silence(0.02, sr), _square_samples(311.13, 0.10, sr)), 0.55)
-        self._sounds["reset"] = _make_sound(_concat(_square_samples(440, 0.055, sr), _square_samples(554.37, 0.055, sr), _square_samples(659.25, 0.09, sr)), 0.42)
-        # Note: You can add "win" and "lose" here similarly using the logic from your original code
+        self._sounds["correct"] = _make_sound(_concat(
+            _square_samples(659.25, 0.06, sr, attack=0.003, decay=0.02, harmonics=6),
+            _square_samples(987.77, 0.10, sr, attack=0.003, decay=0.07, harmonics=6),
+        ), 0.52)
+        self._sounds["cpu_move"] = _make_sound(
+            _square_samples(330, 0.07, sr, attack=0.003, decay=0.04, harmonics=4), 0.28)
+        self._sounds["error"] = _make_sound(_concat(
+            _square_samples(220, 0.06, sr, attack=0.003, decay=0.02, harmonics=10),
+            _square_samples(164.81, 0.14, sr, attack=0.003, decay=0.10, harmonics=10),
+        ), 0.55)
+        self._sounds["tick"] = _make_sound(
+            _square_samples(880, 0.025, sr, attack=0.002, decay=0.015, harmonics=3), 0.20)
+        self._sounds["tick_warn"] = _make_sound(
+            _square_samples(1320, 0.035, sr, attack=0.002, decay=0.02, harmonics=3), 0.40)
+        self._sounds["timeout"] = _make_sound(_concat(
+            _square_samples(392, 0.10, sr, attack=0.005, decay=0.04, harmonics=5),
+            _silence(0.02, sr),
+            _square_samples(311.13, 0.10, sr, attack=0.005, decay=0.04, harmonics=5),
+            _silence(0.02, sr),
+            _square_samples(233.08, 0.22, sr, attack=0.005, decay=0.16, harmonics=5),
+        ), 0.55)
+        self._sounds["win"] = _make_sound(_concat(
+            _square_samples(783.99, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _square_samples(1046.50, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _square_samples(1318.51, 0.055, sr, attack=0.003, decay=0.01, harmonics=7),
+            _silence(0.04, sr),
+            _square_samples(783.99, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),
+            _silence(0.025, sr),
+            _square_samples(1046.50, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),
+            _silence(0.025, sr),
+            _square_samples(1318.51, 0.09, sr, attack=0.004, decay=0.03, harmonics=7),
+            _silence(0.025, sr),
+            _square_samples(1567.98, 0.18, sr, attack=0.004, decay=0.05, harmonics=7),
+            _silence(0.03, sr),
+            _square_samples(1318.51, 0.07, sr, attack=0.003, decay=0.02, harmonics=7),
+            _silence(0.02, sr),
+            _square_samples(1567.98, 0.45, sr, attack=0.005, decay=0.35, harmonics=7),
+        ), 0.50)
+        self._sounds["lose"] = _make_sound(_concat(
+            _square_samples(493.88, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),
+            _silence(0.025, sr),
+            _square_samples(369.99, 0.16, sr, attack=0.008, decay=0.05, harmonics=5),
+            _silence(0.025, sr),
+            _triangle_samples(311.13, 0.13, sr, attack=0.008, decay=0.05),
+            _silence(0.015, sr),
+            _square_samples(329.63, 0.08, sr, attack=0.005, decay=0.03, harmonics=5),
+            _silence(0.015, sr),
+            _triangle_samples(311.13, 0.10, sr, attack=0.005, decay=0.04),
+            _silence(0.03, sr),
+            _triangle_samples(246.94, 0.60, sr, attack=0.010, decay=0.50),
+        ), 0.55)
+        self._sounds["reset"] = _make_sound(_concat(
+            _square_samples(440, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
+            _square_samples(554.37, 0.055, sr, attack=0.003, decay=0.02, harmonics=5),
+            _square_samples(659.25, 0.09, sr, attack=0.003, decay=0.06, harmonics=5),
+        ), 0.42)
 
     def play(self, name: str):
-        if not SOUND_AVAILABLE: return
+        if not SOUND_AVAILABLE:
+            return
         snd = self._sounds.get(name)
-        if snd:
-            try: snd.play()
-            except Exception as e: print("Sound playback error:", e)
+        if snd is None:
+            return
+        try:
+            snd.play()
+        except Exception as e:
+            print("Sound playback error:", e)
 
 
 DIR_TO_ARROW = {
@@ -397,7 +459,6 @@ class SplashScreen:
     def __init__(self, root, on_start_callback):
         self.root = root
         self.on_start = on_start_callback
-        self.sfx=SoundManager()
         self.frame = tk.Frame(root, bg=self.C['bg'])
         self.frame.pack(fill='both', expand=True)
         self.canvas = tk.Canvas(self.frame, bg=self.C['bg'], highlightthickness=0)
@@ -522,6 +583,7 @@ class SplashScreen:
         return '#{:02x}{:02x}{:02x}'.format(r//3, g//3, b//3)
 
     def _draw_start_button(self, c, cx, cy, w, h):
+        self.sfx=SoundManager()
         x0, y0 = cx-w/2, cy-h/2
         x1, y1 = cx+w/2, cy+h/2
         for i in range(4, 0, -1):
