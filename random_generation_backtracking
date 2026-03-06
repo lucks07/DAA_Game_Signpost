@@ -265,11 +265,13 @@ def random_hamiltonian_path_king(label_to_pos, pos_to_label, start='A', goal='P'
                 if dr == 0 and dc == 0:
                     continue
                 rr, cc = r + dr, c + dc
-                if (rr, cc) in pos_to_label:
+                while (rr, cc) in pos_to_label:
                     nbrs.append(pos_to_label[(rr, cc)])
+                    rr += dr
+                    cc += dc
         random.shuffle(nbrs)
         return nbrs
-
+    
     def backtrack(cur):
         if visited == all_labels and cur == goal:
             return True
@@ -465,6 +467,7 @@ class SplashScreen:
         self.canvas.pack(fill='both', expand=True)
         self.canvas.bind('<Configure>', self._on_resize)
         self._draw_after_id = None
+        self.sfx=SoundManager()
 
     def _on_resize(self, event):
         if self._draw_after_id:
@@ -583,7 +586,7 @@ class SplashScreen:
         return '#{:02x}{:02x}{:02x}'.format(r//3, g//3, b//3)
 
     def _draw_start_button(self, c, cx, cy, w, h):
-        self.sfx=SoundManager()
+        
         x0, y0 = cx-w/2, cy-h/2
         x1, y1 = cx+w/2, cy+h/2
         for i in range(4, 0, -1):
