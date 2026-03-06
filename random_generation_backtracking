@@ -192,12 +192,10 @@ DIFFICULTY_COLORS = {
     'hard':   '#E05C5C',
 }
 
-# Hover theme per card: (card_bg, border_color)
-# Each level gets its own tinted dark background + its accent as the border
 CARD_HOVER_THEME = {
-    'easy':   {'bg': '#163D28', 'border': '#4CAF82'},   # deep forest green
-    'medium': {'bg': '#3D2D0A', 'border': '#E8A838'},   # deep amber
-    'hard':   {'bg': '#3D1414', 'border': '#E05C5C'},   # deep crimson
+    'easy':   {'bg': '#163D28', 'border': '#4CAF82'},
+    'medium': {'bg': '#3D2D0A', 'border': '#E8A838'},
+    'hard':   {'bg': '#3D1414', 'border': '#E05C5C'},
 }
 
 
@@ -593,7 +591,7 @@ class SplashScreen:
             c.create_rectangle(x0-i, y0-i, x1+i, y1+i, fill='', outline=alpha_col, width=1)
         rect = c.create_rectangle(x0, y0, x1, y1, fill='#1A3A1A',
                                   outline=self.C['green'], width=2)
-        text = c.create_text(cx, cy, text='▶   START GAME',
+        text = c.create_text(cx, cy, text='▶ START GAME',
                              fill=self.C['green'], font=('Courier', 16, 'bold'))
 
         def on_enter(e):
@@ -605,8 +603,6 @@ class SplashScreen:
             c.itemconfig(text, fill=self.C['green'])
 
         def on_click(e):
-            self.destroy()
-            self.on_start()
             self.sfx.play("reset")
             self.destroy()
             self.on_start()
@@ -637,85 +633,121 @@ class DifficultyScreen:
         self.on_chosen = on_difficulty_chosen
         self.sfx = SoundManager()
         self.selected = tk.StringVar(value='')
+        self._pending_pct = None
+        self._diff_btns = {}
+        self._resize_id = None
+        self._quote = random.choice(FUNNY_QUOTES)
 
         self.frame = tk.Frame(root, bg=self.C['bg'])
         self.frame.pack(fill='both', expand=True)
 
-        self._build()
+        self.canvas = tk.Canvas(self.frame, bg=self.C['bg'], highlightthickness=0)
+        self.canvas.pack(fill='both', expand=True)
+        self.canvas.bind('<Configure>', self._on_resize)
+
+    def _on_resize(self, event):
+        if self._resize_id:
+            self.root.after_cancel(self._resize_id)
+        self._resize_id = self.root.after(60, self._build)
 
     def _build(self):
-        f = self.frame
-        f.grid_rowconfigure(0, weight=1)
-        f.grid_columnconfigure(0, weight=1)
-
-        center = tk.Frame(f, bg=self.C['bg'])
-        center.grid(row=0, column=0)
-
-        tk.Label(center, text='SIGNPOST', font=('Georgia', 38, 'bold'),
-                 fg=self.C['gold'], bg=self.C['bg']).pack(pady=(40, 0))
-        tk.Label(center, text='Choose Your Doom  —  or a Reasonable Challenge',
-                 font=('Courier', 12, 'italic'), fg=self.C['text2'],
-                 bg=self.C['bg']).pack(pady=(4, 0))
-
-        quote_frame = tk.Frame(center, bg=self.C['surface'],
-                               highlightbackground=self.C['amber'], highlightthickness=1)
-        quote_frame.pack(pady=22, padx=40, fill='x')
-        tk.Label(quote_frame, text=random.choice(FUNNY_QUOTES),
-                 font=('Courier', 11, 'italic'), fg=self.C['amber'], bg=self.C['surface'],
-                 wraplength=520, justify='center', pady=18, padx=24).pack()
-
-        legend = tk.Frame(center, bg=self.C['bg'])
-        legend.pack(pady=(0, 10))
-        tk.Label(legend,
-                 text='CPU Blunder %  —  higher % means the CPU messes up MORE often (easier for you!)',
-                 font=('Courier', 10), fg=self.C['text2'], bg=self.C['bg']).pack()
-
-        # ── Difficulty cards ───────────────────────────────────
-        btn_row = tk.Frame(center, bg=self.C['bg'])
-        btn_row.pack(pady=10)
-
+        c = self.canvas
+        c.delete('all')
+        # destroy old widgets
+        for w in self._diff_btns.values():
+            for k in ('frame', 'lbl', 'pct', 'outer'):
+                try: w[k].destroy()
+                except: pass
         self._diff_btns = {}
 
+        W = c.winfo_width()
+        H = c.winfo_height()
+        if W < 10 or H < 10:
+            return
+
+        # ── scale factor based on window size ──────────────────
+        scale = min(W / 1100, H / 700)
+        fs = lambda n: max(8, int(n * scale))  # font scaler
+
+        # ── title ──────────────────────────────────────────────
+        ty = H * 0.07
+        c.create_text(W/2, ty, text='SIGNPOST',
+                      font=('Georgia', fs(38), 'bold'),
+                      fill=self.C['gold'])
+        c.create_text(W/2, ty + fs(46),
+                      text='Choose Your Doom  —  or a Reasonable Challenge',
+                      font=('Courier', fs(13), 'italic'),
+                      fill=self.C['text2'])
+
+        # ── quote box ──────────────────────────────────────────
+        qy = ty + fs(80)
+        qw = W * 0.72
+        qh = fs(68)
+        qx0, qx1 = W/2 - qw/2, W/2 + qw/2
+        c.create_rectangle(qx0, qy, qx1, qy+qh,
+                           fill=self.C['surface'], outline=self.C['amber'], width=2)
+        c.create_text(W/2, qy + qh/2, text=self._quote,
+                      font=('Courier', fs(11), 'italic'),
+                      fill=self.C['amber'], width=qw - fs(40), justify='center')
+
+        # ── legend ─────────────────────────────────────────────
+        ly = qy + qh + fs(24)
+        c.create_text(W/2, ly,
+                      text='CPU Blunder %  —  higher % means CPU messes up MORE (easier for you!)',
+                      font=('Courier', fs(11)), fill=self.C['text2'])
+
+        # ── difficulty cards ───────────────────────────────────
         diffs = [
             ('easy',   '😴  EASY',   self.C['green'],
              'CPU blunders: ~60–85%\n"The CPU forgot what arrows are."\nPerfect for warm-ups.'),
             ('medium', '😤  MEDIUM', self.C['amber'],
              'CPU blunders: ~35–60%\n"The CPU read half the manual."\nA fair fight. Mostly.'),
             ('hard',   '💀  HARD',   self.C['red'],
-             'CPU blunders: ~10–30%\n"The CPU has memorised every path."\nGood luck. You\'ll need it.'),
+             'CPU blunders: ~10–30%\n"The CPU memorised every path."\nGood luck. You\'ll need it.'),
         ]
 
-        for key, lbl, color, desc_text in diffs:
-            col_frame = tk.Frame(btn_row, bg=self.C['bg'])
-            col_frame.pack(side='left', padx=18)
+        card_w = int(W * 0.22)
+        card_h = int(H * 0.16)
+        card_gap = int(W * 0.04)
+        total_w = 3 * card_w + 2 * card_gap
+        card_y = ly + fs(36)
+        card_x_start = W/2 - total_w/2
 
-            outer = tk.Frame(col_frame, bg=self.C['border'], padx=2, pady=2)
-            outer.pack()
+        for i, (key, lbl, color, desc_text) in enumerate(diffs):
+            cx = card_x_start + i * (card_w + card_gap)
+            cy = card_y
 
+            outer = tk.Frame(self.frame, bg=self.C['border'], padx=2, pady=2)
             btn_frame = tk.Frame(outer, bg=self.C['surface'], cursor='hand2',
-                                 width=180, height=80)
+                                 width=card_w, height=card_h)
             btn_frame.pack()
             btn_frame.pack_propagate(False)
 
-            lbl_widget = tk.Label(btn_frame, text=lbl, font=('Courier', 15, 'bold'),
+            lbl_widget = tk.Label(btn_frame, text=lbl,
+                                  font=('Courier', fs(16), 'bold'),
                                   fg=color, bg=self.C['surface'], cursor='hand2')
             lbl_widget.place(relx=0.5, rely=0.38, anchor='center')
 
             lo, hi = DIFFICULTY_RANGES[key]
             pct_widget = tk.Label(btn_frame,
                                   text=f'blunder rate  {lo}–{hi}%',
-                                  font=('Courier', 9), fg=self.C['text2'],
-                                  bg=self.C['surface'], cursor='hand2')
+                                  font=('Courier', fs(10)),
+                                  fg=self.C['text2'], bg=self.C['surface'], cursor='hand2')
             pct_widget.place(relx=0.5, rely=0.72, anchor='center')
 
-            desc_lbl = tk.Label(col_frame, text=desc_text,
-                                font=('Courier', 9), fg=self.C['text2'],
-                                bg=self.C['bg'], justify='center', wraplength=176)
-            desc_lbl.pack(pady=(8, 0))
+            c.create_window(cx, cy, window=outer, anchor='nw')
+
+            # desc text below card
+            c.create_text(cx + card_w/2, cy + card_h + fs(36),
+                          text=desc_text, font=('Courier', fs(9)),
+                          fill=self.C['text2'], justify='center',
+                          width=card_w + 10)
 
             self._diff_btns[key] = {
                 'outer': outer, 'frame': btn_frame,
-                'lbl': lbl_widget, 'pct': pct_widget, 'color': color
+                'lbl': lbl_widget, 'pct': pct_widget,
+                'color': color, 'cx': cx, 'cy': cy,
+                'card_w': card_w, 'card_h': card_h,
             }
 
             for widget in (btn_frame, lbl_widget, pct_widget):
@@ -723,18 +755,15 @@ class DifficultyScreen:
                 widget.bind('<Leave>', lambda e, k=key: self._hover(k, False))
                 widget.bind('<Button-1>', lambda e, k=key: self._select(k))
 
-        # ── Custom PCT input ───────────────────────────────────
-        custom_frame = tk.Frame(center, bg=self.C['bg'])
-        custom_frame.pack(pady=(16, 0))
+        # ── custom % row ───────────────────────────────────────
+        custom_y = card_y + card_h + fs(100)
+        c.create_text(W/2, custom_y,
+                      text='Or enter a custom blunder %  (0 = genius CPU,  100 = blind CPU):',
+                      font=('Courier', fs(11)), fill=self.C['text2'])
 
-        tk.Label(custom_frame,
-                 text='Or enter a custom blunder %  (0 = genius CPU,  100 = blind CPU):',
-                 font=('Courier', 10), fg=self.C['text2'], bg=self.C['bg']).pack()
-
-        input_row = tk.Frame(custom_frame, bg=self.C['bg'])
-        input_row.pack(pady=8)
-
-        self.custom_entry = tk.Entry(input_row, width=6, font=('Courier', 14, 'bold'),
+        input_frame = tk.Frame(self.frame, bg=self.C['bg'])
+        self.custom_entry = tk.Entry(input_frame, width=5,
+                                     font=('Courier', fs(13), 'bold'),
                                      bg=self.C['surface'], fg=self.C['gold'],
                                      insertbackground=self.C['gold'],
                                      relief='flat', bd=0,
@@ -742,33 +771,36 @@ class DifficultyScreen:
                                      highlightthickness=1, justify='center')
         self.custom_entry.pack(side='left', padx=(0, 8))
 
-        tk.Button(input_row, text='USE THIS %',
-                  font=('Courier', 11, 'bold'),
+        tk.Button(input_frame, text='USE THIS %',
+                  font=('Courier', fs(11), 'bold'),
                   bg=self.C['surface'], fg=self.C['blue'],
                   activebackground=self.C['border'], activeforeground=self.C['text'],
                   relief='flat', bd=0, padx=12, pady=4, cursor='hand2',
                   command=self._use_custom).pack(side='left')
 
-        self.custom_err = tk.Label(input_row, text='', font=('Courier', 10),
+        self.custom_err = tk.Label(input_frame, text='', font=('Courier', fs(10)),
                                    fg=self.C['red'], bg=self.C['bg'])
         self.custom_err.pack(side='left', padx=8)
+        c.create_window(W/2, custom_y + fs(36), window=input_frame, anchor='center')
 
+        # ── lock in button ─────────────────────────────────────
+        btn_y = custom_y + fs(84)
         self.confirm_btn = tk.Button(
-            center, text='LOCK IN & PLAY  ▶',
-            font=('Courier', 15, 'bold'),
+            self.frame, text='LOCK IN & PLAY  ▶',
+            font=('Courier', fs(15), 'bold'),
             bg='#1A3A1A', fg=self.C['green'],
             activebackground='#2A5A2A', activeforeground='#6FE0A0',
-            relief='flat', bd=0, padx=28, pady=12, cursor='hand2',
-            state='disabled', command=self._confirm
-        )
-        self.confirm_btn.pack(pady=28)
+            relief='flat', bd=0, padx=int(36*scale), pady=int(14*scale),
+            cursor='hand2', state='disabled', command=self._confirm)
+        c.create_window(W/2, btn_y, window=self.confirm_btn, anchor='center')
 
-        self._pending_pct = None
+        self._pending_pct = self._pending_pct  # preserve across redraws
 
     def _hover(self, key, entering):
-        w = self._diff_btns[key]
+        w = self._diff_btns.get(key)
+        if not w:
+            return
         if entering:
-            # Use each card's unique themed hover colors instead of generic darken
             theme = CARD_HOVER_THEME[key]
             w['frame'].config(bg=theme['bg'])
             w['lbl'].config(bg=theme['bg'])
@@ -801,12 +833,18 @@ class DifficultyScreen:
 
         lo, hi = DIFFICULTY_RANGES[key]
         self._pending_pct = random.randint(lo, hi)
-        self.confirm_btn.config(state='normal')
-        self.custom_err.config(text='')
-        self.custom_entry.delete(0, tk.END)
+        try:
+            self.confirm_btn.config(state='normal')
+            self.custom_err.config(text='')
+            self.custom_entry.delete(0, tk.END)
+        except Exception:
+            pass
 
     def _use_custom(self):
-        val = self.custom_entry.get().strip()
+        try:
+            val = self.custom_entry.get().strip()
+        except Exception:
+            return
         try:
             pct = int(val)
             if not (0 <= pct <= 100):
@@ -822,7 +860,10 @@ class DifficultyScreen:
             self.custom_err.config(text=f'✓  Set to {pct}%', fg=self.C['green'])
             self.confirm_btn.config(state='normal')
         except ValueError:
-            self.custom_err.config(text='Enter a whole number 0–100', fg=self.C['red'])
+            try:
+                self.custom_err.config(text='Enter a whole number 0–100', fg=self.C['red'])
+            except Exception:
+                pass
 
     def _confirm(self):
         if self._pending_pct is None:
@@ -993,7 +1034,6 @@ class PuzzleGameGUI:
 
         self._hist("Game started — make your move.", "meta")
         self._hist(f"Difficulty: {self._get_diff_label()} ({self.mistake_pct}% blunder)", "meta")
-        self._hist(f"Path: {' > '.join(self.graph.solution_path)}", "meta")
 
         status_card = tk.Frame(right, bg=self.C['surface'],
                                highlightbackground=self.C['border'], highlightthickness=1)
@@ -1171,7 +1211,7 @@ class PuzzleGameGUI:
             self.play("cpu_move")
             self.flash_cpu(move)
         else:
-            self._hist(f"CPU    >  {move}  (wrong guess! 🎲)", "move_err")
+            self._hist(f"CPU    >  {move}  (wrong guess!)", "move_err")
             self.play("error")
             self.flash_error(move)
         self.reset_timer()
